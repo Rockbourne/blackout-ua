@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.26.0")
+app = FastAPI(title="Blackout UA API", version="0.27.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -323,13 +323,44 @@ async def cherkasy_gpv_search(q: str = Query(..., min_length=3)):
     needle = _gpv_norm(q)
     tokens = [t for t in needle.split() if len(t) >= 2]
     matches = []
+    # A document-wide token AND is useless here: e.g. "Черкаси" can occur in a
+    # company name/header while "Смілянська" occurs hundreds of lines later.
+    # Require the query terms to occur in the same local address-sized window.
+    window_radius = 260
     for d in docs:
         hay = d["normalized"]
-        if needle in hay or (tokens and all(t in hay for t in tokens)):
-            pos = hay.find(needle)
-            if pos < 0:
-                pos = min((hay.find(t) for t in tokens if hay.find(t) >= 0), default=0)
-            matches.append({"group": d["group"], "context": hay[max(0,pos-160):min(len(hay),pos+len(needle)+220)], "source_url": d["url"]})
+        candidates = []
+        if needle and needle in hay:
+            start = 0
+            while True:
+                pos = hay.find(needle, start)
+                if pos < 0:
+                    break
+                candidates.append((pos, "exact_phrase"))
+                start = pos + max(1, len(needle))
+        elif tokens:
+            anchor = tokens[-1]  # street/house is normally the most selective term
+            start = 0
+            while True:
+                pos = hay.find(anchor, start)
+                if pos < 0:
+                    break
+                lo = max(0, pos - window_radius)
+                hi = min(len(hay), pos + len(anchor) + window_radius)
+                local = hay[lo:hi]
+                if all(t in local for t in tokens):
+                    candidates.append((pos, "local_tokens"))
+                start = pos + max(1, len(anchor))
+        if candidates:
+            pos, match_type = candidates[0]
+            lo = max(0, pos - 180)
+            hi = min(len(hay), pos + len(needle) + 240)
+            matches.append({
+                "group": d["group"],
+                "match_type": match_type,
+                "context": hay[lo:hi],
+                "source_url": d["url"],
+            })
     return {"query": q, "matches": matches, "ambiguous": len(matches) != 1}
 
 CHERKASY_DEPARTMENTS = [
