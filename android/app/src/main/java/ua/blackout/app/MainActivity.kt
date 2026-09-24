@@ -88,8 +88,8 @@ class MainActivity:AppCompatActivity(){
     findViewById<TextView>(R.id.status).text=when(s.current.status){"ON"->"Світло має бути";"OFF"->"Планове відключення";else->"Статус невідомий"}
     findViewById<TextView>(R.id.details).text="${body.address.street.value}, ${body.address.house.value} · група ${s.group}"
     renderNext(s.current)
-    val now=ZonedDateTime.now()
-    findViewById<ProgressBar>(R.id.todayTimeline).progress=now.hour*60+now.minute
+    findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(s.today,true)
+    findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(s.tomorrow,false)
     findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",s.today)
     findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",s.tomorrow)
     if(fcmToken!=null)api.subscribe(Subscription(installId,region=region,group=s.group)).enqueue(simpleCallback())
