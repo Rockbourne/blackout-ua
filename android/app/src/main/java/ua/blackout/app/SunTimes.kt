@@ -18,6 +18,6 @@ object SunTimes{
   val h=(if(rise)360-Math.toDegrees(kotlin.math.acos(cosH)) else Math.toDegrees(kotlin.math.acos(cosH)))/15
   var utc=h+ra-0.06571*t-6.622-lngHour;utc=(utc+24)%24
   val instant=date.atStartOfDay(ZoneOffset.UTC).plusMinutes((utc*60).toLong())
-  val local=instant.atZone(ZoneId.of("Europe/Kyiv"));return "%02d:%02d".format(local.hour,local.minute)
+  val local=instant.withZoneSameInstant(ZoneId.of("Europe/Kyiv"));return "%02d:%02d".format(local.hour,local.minute)
  }
 }
