@@ -22,6 +22,8 @@ class MainActivity:AppCompatActivity(){
  private val api by lazy { Retrofit.Builder().baseUrl("https://blackout-ua-api.onrender.com/").addConverterFactory(GsonConverterFactory.create()).build().create(Api::class.java) }
  private val installId by lazy { Settings.Secure.getString(contentResolver,Settings.Secure.ANDROID_ID) }
  private val providers=listOf("yasno")
+ private val notifyValues=listOf(0,10,15,30,60)
+ private val notifyLabels=listOf("Не попереджати","За 10 хв","За 15 хв","За 30 хв","За 60 хв")
  private val regions=listOf("kyiv","dnipro-dtek","dnipro-cek")
  private var fcmToken:String?=null
  private var selectedStreetId:Int?=null
@@ -40,12 +42,12 @@ class MainActivity:AppCompatActivity(){
   applySun()
   findViewById<Button>(R.id.settings).setOnClickListener{
    val v=LayoutInflater.from(this).inflate(R.layout.dialog_settings,null)
-   val providerSpinner=v.findViewById<Spinner>(R.id.provider);val spinner=v.findViewById<Spinner>(R.id.region);val streetView=v.findViewById<AutoCompleteTextView>(R.id.street);val houseView=v.findViewById<AutoCompleteTextView>(R.id.house);val sun=v.findViewById<Switch>(R.id.showSun)
-   providerSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("YASNO"));providerSpinner.setSelection(prefs.getInt("provider_index",0))
+   val providerSpinner=v.findViewById<Spinner>(R.id.provider);val spinner=v.findViewById<Spinner>(R.id.region);val streetView=v.findViewById<AutoCompleteTextView>(R.id.street);val houseView=v.findViewById<AutoCompleteTextView>(R.id.house);val sun=v.findViewById<Switch>(R.id.showSun);val notifySpinner=v.findViewById<Spinner>(R.id.notifyBefore)
+   providerSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("YASNO"));providerSpinner.setSelection(prefs.getInt("provider_index",0));notifySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,notifyLabels);notifySpinner.setSelection(notifyValues.indexOf(prefs.getInt("notify_before_minutes",30)).let{if(it>=0)it else 3})
    spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Київ","Дніпро · ДТЕК","Дніпро · ЦЕК"));spinner.setSelection(prefs.getInt("region_index",0))
    streetView.setText(prefs.getString("street",""),false);houseView.setText(prefs.getString("house",""),false);sun.isChecked=prefs.getBoolean("show_sun",true)
    streetView.addTextChangedListener(object:TextWatcher{override fun beforeTextChanged(s:CharSequence?,st:Int,c:Int,a:Int){};override fun onTextChanged(s:CharSequence?,st:Int,b:Int,c:Int){};override fun afterTextChanged(s:Editable?){val q=s?.toString()?.trim().orEmpty();if(q.length<2)return;api.streets(regions[spinner.selectedItemPosition],q).enqueue(object:Callback<AddressItems>{override fun onResponse(call:Call<AddressItems>,r:Response<AddressItems>){val items=r.body()?.items.orEmpty();streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,items.mapNotNull{it.value}));streetView.setOnItemClickListener{_,_,pos,_->items.getOrNull(pos)?.id?.let{loadHouses(regions[spinner.selectedItemPosition],it,houseView)}};streetView.showDropDown()};override fun onFailure(call:Call<AddressItems>,t:Throwable){}})}})
-   AlertDialog.Builder(this).setTitle("Налаштування").setView(v).setNegativeButton("Скасувати",null).setPositiveButton("Зберегти"){_,_->val ri=spinner.selectedItemPosition;val street=streetView.text.toString().trim();val house=houseView.text.toString().trim();prefs.edit().putInt("provider_index",providerSpinner.selectedItemPosition).putInt("region_index",ri).putString("street",street).putString("house",house).putBoolean("show_sun",sun.isChecked).apply();applySun();if(street.length>=2&&house.isNotEmpty())loadAddress(regions[ri],street,house)}.show()
+   AlertDialog.Builder(this).setTitle("Налаштування").setView(v).setNegativeButton("Скасувати",null).setPositiveButton("Зберегти"){_,_->val ri=spinner.selectedItemPosition;val street=streetView.text.toString().trim();val house=houseView.text.toString().trim();prefs.edit().putInt("provider_index",providerSpinner.selectedItemPosition).putInt("region_index",ri).putString("street",street).putString("house",house).putBoolean("show_sun",sun.isChecked).putInt("notify_before_minutes",notifyValues[notifySpinner.selectedItemPosition]).apply();applySun();if(street.length>=2&&house.isNotEmpty())loadAddress(regions[ri],street,house)}.show()
   }
   findViewById<Button>(R.id.testSchedule).setOnClickListener{
    val now=ZonedDateTime.now();fun hm(minutes:Int):String{val m=((now.hour*60+now.minute+minutes)%1440+1440)%1440;return "%02d:%02d".format(m/60,m%60)}
@@ -79,7 +81,7 @@ class MainActivity:AppCompatActivity(){
     findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(s.tomorrow,false)
     findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",s.today)
     findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",s.tomorrow)
-    if(fcmToken!=null)api.subscribe(Subscription(installId,region=region,group=s.group)).enqueue(simpleCallback())
+    if(fcmToken!=null)api.subscribe(Subscription(installId,region=region,group=s.group,notify_before_minutes=getSharedPreferences("blackout",MODE_PRIVATE).getInt("notify_before_minutes",30))).enqueue(simpleCallback())
    }
    override fun onFailure(c:Call<AddressOutages>,t:Throwable){findViewById<TextView>(R.id.status).text="Немає зв’язку"}
   })
