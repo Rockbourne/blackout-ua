@@ -10,8 +10,8 @@
 <TextView android:id="@+id/nextOutage" android:text="" android:textSize="16sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/details" android:text="" android:textSize="15sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:text="Сьогодні" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="28dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<ProgressBar android:id="@+id/todayTimeline" style="?android:attr/progressBarStyleHorizontal" android:max="1440" android:progress="0" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="12dp"/>
+<ua.blackout.app.ScheduleTimelineView android:id="@+id/todayTimeline" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="24dp"/>
 <TextView android:id="@+id/today" android:text="" android:textSize="17sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:text="Завтра" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="24dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<TextView android:id="@+id/tomorrow" android:text="" android:textSize="17sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<ua.blackout.app.ScheduleTimelineView android:id="@+id/tomorrowTimeline" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="24dp"/><TextView android:id="@+id/tomorrow" android:text="" android:textSize="17sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 </LinearLayout></ScrollView>
