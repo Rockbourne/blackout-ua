@@ -32,7 +32,22 @@ jobs:
             exit 1
           fi
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+      - name: Restore stable debug signing key
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "Missing DEBUG_KEYSTORE_BASE64 repository secret. A persistent signing key is required so APK updates remain installable over previous builds."
+            exit 1
+          fi
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > app/blackout-debug.keystore
       - name: Build debug APK
+        env:
+          BLACKOUT_KEYSTORE_PATH: blackout-debug.keystore
+          BLACKOUT_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          BLACKOUT_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS }}
+          BLACKOUT_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
+          BLACKOUT_VERSION_CODE: ${{ github.run_number }}
         run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
