@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
 import re
+import os
+import json
+import hashlib
 import httpx
+import asyncpg
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.4.1")
+app = FastAPI(title="Blackout UA API", version="0.5.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -18,14 +22,41 @@ STATUS_MAP = {
     "ScheduleApplies": "SCHEDULED",
 }
 STREET_STOPWORDS = {"вул", "вулиця", "просп", "проспект", "пров", "провулок", "бул", "бульвар", "пл", "площа"}
+DATABASE_URL = os.getenv("DATABASE_URL")
+db_pool = None
+
+@app.on_event("startup")
+async def startup():
+    global db_pool
+    if not DATABASE_URL:
+        return
+    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
+    async with db_pool.acquire() as conn:
+        await conn.execute("""CREATE TABLE IF NOT EXISTS schedule_snapshots (
+            id BIGSERIAL PRIMARY KEY,
+            provider TEXT NOT NULL,
+            region TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            provider_updated_at TEXT,
+            content_hash TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_snapshots_lookup
+            ON schedule_snapshots(provider, region, group_name, fetched_at DESC)""")
+
+@app.on_event("shutdown")
+async def shutdown():
+    if db_pool:
+        await db_pool.close()
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.4.1", "docs": "/docs"}
+    return {"name": "Blackout UA API", "version": "0.5.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "database": "connected" if db_pool else "disabled", "time": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/v1/regions")
 async def regions():
@@ -185,6 +216,28 @@ async def address_search(
 async def address_lookup(region: str, street: str, house: str):
     return await resolve_address(region, street, house)
 
+def schedule_hash(schedule: dict) -> str:
+    stable = {"provider_updated_at": schedule.get("provider_updated_at"), "today": schedule.get("today"), "tomorrow": schedule.get("tomorrow")}
+    raw = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+async def save_snapshot(schedule: dict) -> dict:
+    if not db_pool:
+        return {"database": "disabled", "saved": False, "changed": None}
+    digest = schedule_hash(schedule)
+    async with db_pool.acquire() as conn:
+        previous = await conn.fetchrow(
+            "SELECT id, content_hash FROM schedule_snapshots WHERE provider=$1 AND region=$2 AND group_name=$3 ORDER BY fetched_at DESC LIMIT 1",
+            schedule["provider"], schedule["region"], schedule["group"]
+        )
+        if previous and previous["content_hash"] == digest:
+            return {"database": "connected", "saved": False, "changed": False, "snapshot_id": previous["id"]}
+        row = await conn.fetchrow(
+            "INSERT INTO schedule_snapshots(provider,region,group_name,provider_updated_at,content_hash,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING id",
+            schedule["provider"], schedule["region"], schedule["group"], schedule.get("provider_updated_at"), digest, json.dumps(schedule, ensure_ascii=False)
+        )
+        return {"database": "connected", "saved": True, "changed": previous is not None, "snapshot_id": row["id"], "previous_snapshot_id": previous["id"] if previous else None}
+
 async def get_outages(region: str, group: str) -> dict:
     config = YASNO_REGIONS.get(region)
     if config is None:
@@ -197,7 +250,7 @@ async def get_outages(region: str, group: str) -> dict:
     if group_data is None:
         raise HTTPException(status_code=404, detail={"message": "Group not found", "group": group})
 
-    return {
+    result = {
         "region": region,
         "group": group,
         "provider": "yasno",
@@ -206,6 +259,8 @@ async def get_outages(region: str, group: str) -> dict:
         "today": normalize_day(group_data.get("today") or {}),
         "tomorrow": normalize_day(group_data.get("tomorrow") or {}),
     }
+    result["snapshot"] = await save_snapshot(result)
+    return result
 
 @app.get("/api/v1/outages/{region}/{group}")
 async def outages(region: str, group: str):
@@ -247,3 +302,18 @@ async def address_outages_path(region: str, street: str, house: str):
         "groups": address["groups"],
         "schedules": schedules,
     }
+
+
+@app.get("/api/v1/history/{region}/{group}")
+async def history(region: str, group: str, limit: int = Query(20, ge=1, le=100)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, provider, provider_updated_at, payload, fetched_at FROM schedule_snapshots WHERE region=$1 AND group_name=$2 ORDER BY fetched_at DESC LIMIT $3",
+            region, group, limit
+        )
+    return {"region": region, "group": group, "snapshots": [
+        {"id": r["id"], "provider": r["provider"], "provider_updated_at": r["provider_updated_at"], "fetched_at": r["fetched_at"].isoformat(), "schedule": r["payload"]}
+        for r in rows
+    ]}
