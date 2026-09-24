@@ -83,7 +83,8 @@ class MainActivity:AppCompatActivity(){
       regionSpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,departments.map{it.NAME!!})
       if(departments.isNotEmpty()){
        val saved=prefs.getInt("cherkasy_department_index",0).coerceIn(0,departments.lastIndex)
-       regionSpinner.setSelection(saved)
+       regionSpinner.setSelection(saved, false)
+       departments.getOrNull(saved)?.ID?.toIntOrNull()?.let{loadCherkasyCities(it)}
       }
      }
      override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Не вдалося завантажити список філій",Toast.LENGTH_LONG).show()}
