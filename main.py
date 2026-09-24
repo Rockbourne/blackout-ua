@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.28.0")
+app = FastAPI(title="Blackout UA API", version="0.29.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -350,17 +350,30 @@ def _gpv_house_matches(spec: str, house: str) -> bool:
     if not target:
         return False
     spec_n = _gpv_norm(spec)
-    # Exact house tokens including slash/suffix.
     tokens = re.findall(r"\d+(?:[/.-]\d+)?(?:[а-яa-z])?", spec_n)
     if target in {t.replace(" ", "") for t in tokens}:
         return True
-    # Conservative numeric ranges only. Never infer odd/even unless source says so.
     if target.isdigit():
         n = int(target)
         for a, b in re.findall(r"(?<!\d)(\d{1,4})\s*-\s*(\d{1,4})(?!\d)", spec_n):
             if int(a) <= n <= int(b):
                 return True
     return False
+
+def _gpv_settlement_markers(line: str, settlement: str) -> bool:
+    """Require an actual locality marker, not Черкасиобленерго/Черкасигаз."""
+    name = re.escape(_gpv_norm(settlement))
+    patterns = [
+        rf"(?:^|\s)м\.?\s+{name}(?:\s|$)",
+        rf"(?:^|\s)с\.?\s+{name}(?:\s|$)",
+        rf"(?:^|\s)с-ще\.?\s+{name}(?:\s|$)",
+        rf"(?:^|\s)смт\.?\s+{name}(?:\s|$)",
+    ]
+    return any(re.search(p, line) for p in patterns)
+
+def _gpv_street_marker(line: str, street: str) -> bool:
+    name = re.escape(_gpv_norm(street))
+    return bool(re.search(rf"(?:^|\s)(?:вул|вулиця)\.?\s+{name}(?:\s|$)", line))
 
 @app.get("/api/v1/cherkasy/gpv/resolve")
 async def cherkasy_gpv_resolve(
@@ -373,22 +386,29 @@ async def cherkasy_gpv_resolve(
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
 
-    settlement_n, street_n = _gpv_norm(settlement), _gpv_norm(street)
     results = []
-    # Keep line boundaries from PDF extraction. Address resolution must be local:
-    # settlement marker -> nearby street row -> house specification.
     for d in docs:
         lines = [_gpv_norm(x) for x in d.get("text", "").splitlines() if _gpv_norm(x)]
-        settlement_hits = [i for i, line in enumerate(lines) if settlement_n in line]
+        # Settlement must be explicitly written as м./с./с-ще/смт + name.
+        settlement_hits = [i for i, line in enumerate(lines) if _gpv_settlement_markers(line, settlement)]
         for si in settlement_hits:
-            # Settlement sections in these PDFs are compact, but can span many rows.
-            # Stop at a new explicit settlement marker where possible.
-            section_end = min(len(lines), si + 80)
+            # End this locality at the next explicit locality marker of any name.
+            section_end = min(len(lines), si + 120)
+            locality_re = re.compile(r"(?:^|\s)(?:м|с|с-ще|смт)\.?\s+[а-яіїєґ]")
+            for k in range(si + 1, section_end):
+                if locality_re.search(lines[k]):
+                    section_end = k
+                    break
             for j in range(si, section_end):
-                line = lines[j]
-                if street_n not in line:
+                if not _gpv_street_marker(lines[j], street):
                     continue
-                local = " ".join(lines[j:min(section_end, j + 3)])
+                # House numbers belong to this street only until the next street marker.
+                street_end = min(section_end, j + 8)
+                for k in range(j + 1, street_end):
+                    if re.search(r"(?:^|\s)(?:вул|вулиця|пров|просп|б-р|пл)\.?\s+[а-яіїєґ]", lines[k]):
+                        street_end = k
+                        break
+                local = " ".join(lines[j:street_end])
                 if _gpv_house_matches(local, house):
                     results.append({
                         "group": d["group"],
@@ -399,16 +419,13 @@ async def cherkasy_gpv_resolve(
                     })
                     break
 
-    # Deduplicate repeated PDF extraction rows.
     unique = {}
     for item in results:
         unique[(item["group"], item["address_context"])] = item
     results = list(unique.values())
     groups = sorted({x["group"] for x in results}, key=lambda x: tuple(map(int, x.split("."))))
     return {
-        "settlement": settlement,
-        "street": street,
-        "house": house,
+        "settlement": settlement, "street": street, "house": house,
         "groups": groups,
         "resolved": groups[0] if len(groups) == 1 else None,
         "ambiguous": len(groups) > 1,
