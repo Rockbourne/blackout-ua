@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.23.0")
+app = FastAPI(title="Blackout UA API", version="0.24.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -142,7 +142,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.23.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.24.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -221,7 +221,7 @@ async def yasno_get(path: str, params: dict | None = None):
 async def cherkasy_get(params: dict):
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(CHERKASY_ROOT, params=params, headers={"Accept": "*/*", "Referer": "https://www.cherkasyoblenergo.com/"})
+            response = await client.get(CHERKASY_ROOT, params=params, headers={"Accept": "*/*", "Accept-Language": "uk,en-US;q=0.9,en;q=0.8", "Referer": "https://www.cherkasyoblenergo.com/", "User-Agent": "Mozilla/5.0 BlackoutUA/0.24"})
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:
