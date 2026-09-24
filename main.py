@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, HTTPException
 
-app = FastAPI(title="Blackout UA API", version="0.1.0")
+app = FastAPI(title="Blackout UA API", version="0.1.1")
 
-YASNO_BASE = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
+YASNO_BASE = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_REGIONS = {
     "kyiv": {"region_id": 25, "dso_id": 902},
     "dnipro-dtek": {"region_id": 3, "dso_id": 301},
@@ -13,7 +13,7 @@ YASNO_REGIONS = {
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.1.0", "docs": "/docs"}
+    return {"name": "Blackout UA API", "version": "0.1.1", "docs": "/docs"}
 
 @app.get("/health")
 async def health():
