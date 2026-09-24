@@ -68,7 +68,7 @@ class MainActivity:AppCompatActivity(){
     cities=emptyList();streets=emptyList();selectedStreetId=null
     citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження…"))
     api.cherkasyCities(deptId).enqueue(object:Callback<CherkasyItems>{
-     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+     override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
       val backendCities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
       if(backendCities.isNotEmpty()){
        cities=backendCities;citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!});citySpinner.setSelection(0,false);streetView.setText("",false);houseView.setText("",false)
@@ -82,7 +82,7 @@ class MainActivity:AppCompatActivity(){
     regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження філій…"))
     citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,emptyList<String>())
     api.cherkasyDepartments().enqueue(object:Callback<CherkasyItems>{
-     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+     override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
       departments=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
       regionSpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,departments.map{it.NAME!!})
       if(departments.isNotEmpty()){
@@ -120,7 +120,7 @@ class MainActivity:AppCompatActivity(){
      if(providers[providerSpinner.selectedItemPosition]=="cherkasyoblenergo"){
       val cityId=cities.getOrNull(citySpinner.selectedItemPosition)?.ID?.toIntOrNull()?:return
       cherkasyDirect.streets(cityId=cityId,q=q).enqueue(object:Callback<List<CherkasyItem>>{
-       override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+       override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
        streets=r.body().orEmpty()
        streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,streets.map{it.NAME?:""}))
        streetView.setOnItemClickListener{_,_,pos,_->
@@ -188,7 +188,7 @@ class MainActivity:AppCompatActivity(){
  private fun loadYasnoHouses(region:String,streetId:Int,view:AutoCompleteTextView){api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{override fun onResponse(c:Call<AddressItems>,r:Response<AddressItems>){val values=r.body()?.items?.mapNotNull{it.value}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<AddressItems>,t:Throwable){}})}
  private fun loadCherkasyHouses(streetId:Int,view:AutoCompleteTextView){
   cherkasyDirect.houses(streetId=streetId).enqueue(object:Callback<List<CherkasyItem>>{
-   override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+   override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
     val values=r.body().orEmpty().mapNotNull{it.HOUSE}
     view.isEnabled=true;view.setText("",false)
     view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values))
