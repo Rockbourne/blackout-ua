@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
 }
+val blackoutVersionCode = System.getenv("BLACKOUT_VERSION_CODE")?.toIntOrNull() ?: 1
+
 android {
     signingConfigs {
         create("stableDebug") {
@@ -25,8 +27,8 @@ android {
         applicationId = "ua.blackout.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = System.getenv("BLACKOUT_VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "0.1.0"
+        versionCode = blackoutVersionCode
+        versionName = "0.1.$blackoutVersionCode"
     }
     buildTypes {
         getByName("debug") {
