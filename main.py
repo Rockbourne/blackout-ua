@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.24.0")
+app = FastAPI(title="Blackout UA API", version="0.25.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -142,7 +142,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.24.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.25.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -219,11 +219,37 @@ async def yasno_get(path: str, params: dict | None = None):
         raise HTTPException(status_code=502, detail=f"Provider request failed: {type(exc).__name__}") from exc
 
 async def cherkasy_get(params: dict):
+    """Fetch Cherkasyoblenergo JSON without assuming UTF-8.
+
+    The provider is a legacy PHP endpoint.  httpx Response.json() decodes JSON
+    bytes as UTF-8/16/32 and ignores the HTTP charset; that can fail for this
+    endpoint even when a browser displays the response correctly.  Decode the
+    body using the declared/apparent encoding first, then parse JSON ourselves.
+    """
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(CHERKASY_ROOT, params=params, headers={"Accept": "*/*", "Accept-Language": "uk,en-US;q=0.9,en;q=0.8", "Referer": "https://www.cherkasyoblenergo.com/", "User-Agent": "Mozilla/5.0 BlackoutUA/0.24"})
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            response = await client.get(
+                CHERKASY_ROOT,
+                params=params,
+                headers={
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "uk,en-US;q=0.9,en;q=0.8",
+                    "Referer": "https://www.cherkasyoblenergo.com/",
+                    "Origin": "https://www.cherkasyoblenergo.com",
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+                },
+            )
             response.raise_for_status()
-            return response.json()
+            raw = response.content.lstrip(b"\\xef\\xbb\\xbf")
+            # Prefer strict UTF-8, then provider/legacy Ukrainian encodings.
+            for encoding in ("utf-8", response.encoding, "windows-1251", "cp1251"):
+                if not encoding:
+                    continue
+                try:
+                    return json.loads(raw.decode(encoding))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    pass
+            raise ValueError("Provider returned non-JSON or unsupported encoding")
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo HTTP {exc.response.status_code}") from exc
     except (httpx.RequestError, ValueError) as exc:
