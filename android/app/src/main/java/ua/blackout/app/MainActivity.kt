@@ -61,7 +61,7 @@ class MainActivity:AppCompatActivity(){
    }
    fun setupCherkasy(){
     regionSpinner.visibility=View.VISIBLE;citySpinner.visibility=View.VISIBLE
-    regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Черкаська область"))
+    regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Черкаський район"))
     regionSpinner.setSelection(0)
     // ID 1 / м. Черкаси is confirmed by the provider API. Keep it usable even if the city-list request fails.
     cities=listOf(CherkasyItem("1","м. Черкаси",null))
