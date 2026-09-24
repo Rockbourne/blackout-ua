@@ -64,8 +64,13 @@ class MainActivity:AppCompatActivity(){
     regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Черкаська область"))
     regionSpinner.setSelection(0)
     api.cherkasyCities(1).enqueue(object:Callback<CherkasyItems>{
-     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){cities=r.body()?.items.orEmpty();citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME?:"—"});citySpinner.setSelection(prefs.getInt("cherkasy_city_index",0).coerceIn(0,(cities.size-1).coerceAtLeast(0)))}
-     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Не вдалося завантажити міста Черкасиобленерго",Toast.LENGTH_SHORT).show()}
+     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){cities=r.body()?.items.orEmpty()
+      val labels=cities.map{it.NAME?:"—"}
+      citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,labels)
+      citySpinner.visibility=View.VISIBLE
+      if(cities.isNotEmpty())citySpinner.setSelection(prefs.getInt("cherkasy_city_index",0).coerceIn(0,cities.lastIndex))
+      else Toast.makeText(this@MainActivity,"Черкасиобленерго не повернуло список міст",Toast.LENGTH_SHORT).show()}
+     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){citySpinner.visibility=View.GONE;Toast.makeText(this@MainActivity,"Не вдалося завантажити міста Черкасиобленерго: ${t.message ?: "помилка мережі"}",Toast.LENGTH_LONG).show()}
     })
    }
    providerSpinner.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
