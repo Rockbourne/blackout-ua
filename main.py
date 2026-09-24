@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import re
 import os
 import json
@@ -7,7 +8,7 @@ import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.6.0")
+app = FastAPI(title="Blackout UA API", version="0.7.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -52,7 +53,7 @@ async def shutdown():
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.6.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.7.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -254,6 +255,41 @@ async def save_snapshot(schedule: dict) -> dict:
         changes = outage_diff(previous["payload"], schedule) if previous else []
         return {"database": "connected", "saved": True, "changed": previous is not None, "snapshot_id": row["id"], "previous_snapshot_id": previous["id"] if previous else None, "changes": changes}
 
+def time_to_minute(value: str) -> int:
+    hour, minute = value.split(":")
+    return int(hour) * 60 + int(minute)
+
+def current_summary(schedule: dict) -> dict:
+    now = datetime.now(ZoneInfo("Europe/Kyiv"))
+    today = schedule.get("today") or {}
+    tomorrow = schedule.get("tomorrow") or {}
+    minute = now.hour * 60 + now.minute
+    status = "UNKNOWN"
+    until = None
+    if today.get("date") == now.date().isoformat():
+        if today.get("status") == "ON":
+            status = "ON"
+        elif today.get("status") == "UNKNOWN":
+            status = "UNKNOWN"
+        else:
+            status = "ON"
+            for slot in today.get("slots") or []:
+                start, end = time_to_minute(slot["start"]), time_to_minute(slot["end"])
+                if start <= minute < end:
+                    status, until = slot["status"], slot["end"]
+                    break
+    candidates = []
+    for day in (today, tomorrow):
+        for outage in day.get("outages") or []:
+            date = day.get("date")
+            if not date:
+                continue
+            start_minute = time_to_minute(outage["start"])
+            if date > now.date().isoformat() or (date == now.date().isoformat() and start_minute > minute):
+                candidates.append({"date": date, "start": outage["start"], "end": outage["end"]})
+    candidates.sort(key=lambda x: (x["date"], x["start"]))
+    return {"status": status, "until": until, "checked_at": now.isoformat(), "next_outage": candidates[0] if candidates else None}
+
 async def get_outages(region: str, group: str) -> dict:
     config = YASNO_REGIONS.get(region)
     if config is None:
@@ -275,6 +311,7 @@ async def get_outages(region: str, group: str) -> dict:
         "today": normalize_day(group_data.get("today") or {}),
         "tomorrow": normalize_day(group_data.get("tomorrow") or {}),
     }
+    result["current"] = current_summary(result)
     result["snapshot"] = await save_snapshot(result)
     return result
 
