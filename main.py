@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.15.0")
+app = FastAPI(title="Blackout UA API", version="0.16.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.15.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.16.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -232,6 +232,19 @@ async def resolve_address(region: str, street: str, house: str) -> dict:
         provider_words = {w.casefold() for w in re.findall(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ]+", value) if w.casefold().rstrip(".") not in STREET_STOPWORDS}
         return (len(wanted_words & provider_words), -len(provider_words ^ wanted_words))
     street_item = max(streets, key=street_score)
+    # If a broad query returned unrelated candidates, retry using each significant word and merge results.
+    if street_score(street_item)[0] < min(2, len(wanted_words)):
+        merged = list(streets)
+        seen_ids = {x.get("id") for x in merged if isinstance(x, dict)}
+        for word in sorted(wanted_words, key=len, reverse=True):
+            if len(word) < 3:
+                continue
+            extra = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": word})
+            if isinstance(extra, list):
+                for item in extra:
+                    if isinstance(item, dict) and item.get("id") not in seen_ids:
+                        merged.append(item); seen_ids.add(item.get("id"))
+        street_item = max(merged, key=street_score)
     street_id = street_item.get("id")
     if street_id is None:
         raise HTTPException(status_code=502, detail="Provider returned street without id")
