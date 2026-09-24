@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.29.0")
+app = FastAPI(title="Blackout UA API", version="0.30.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -389,16 +389,20 @@ async def cherkasy_gpv_resolve(
     results = []
     for d in docs:
         lines = [_gpv_norm(x) for x in d.get("text", "").splitlines() if _gpv_norm(x)]
-        # Settlement must be explicitly written as м./с./с-ще/смт + name.
+        # PDF extraction can omit the locality heading while preserving address rows.
         settlement_hits = [i for i, line in enumerate(lines) if _gpv_settlement_markers(line, settlement)]
+        sections = []
+        locality_re = re.compile(r"(?:^|\\s)(?:м|с|с-ще|смт)\\.?\\s+[а-яіїєґ]")
         for si in settlement_hits:
-            # End this locality at the next explicit locality marker of any name.
             section_end = min(len(lines), si + 120)
-            locality_re = re.compile(r"(?:^|\s)(?:м|с|с-ще|смт)\.?\s+[а-яіїєґ]")
             for k in range(si + 1, section_end):
                 if locality_re.search(lines[k]):
                     section_end = k
                     break
+            sections.append((si, section_end, lines[si], "explicit_settlement"))
+        if not sections:
+            sections = [(0, len(lines), settlement_n, "street_house_fallback")]
+        for si, section_end, settlement_context, scope_type in sections:
             for j in range(si, section_end):
                 if not _gpv_street_marker(lines[j], street):
                     continue
@@ -413,7 +417,7 @@ async def cherkasy_gpv_resolve(
                     results.append({
                         "group": d["group"],
                         "confidence": "exact_or_range",
-                        "settlement_context": lines[si],
+                        "settlement_context": settlement_context,\n                        "scope_type": scope_type,
                         "address_context": local[:700],
                         "source_url": d["url"],
                     })
