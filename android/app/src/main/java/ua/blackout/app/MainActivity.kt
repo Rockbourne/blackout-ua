@@ -18,12 +18,17 @@ class MainActivity:AppCompatActivity(){
   if(Build.VERSION.SDK_INT>=33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),10)
   val spinner=findViewById<Spinner>(R.id.region)
   spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Київ","Дніпро · ДТЕК","Дніпро · ЦЕК"))
+  val prefs=getSharedPreferences("blackout",MODE_PRIVATE)
+  findViewById<EditText>(R.id.street).setText(prefs.getString("street",""))
+  findViewById<EditText>(R.id.house).setText(prefs.getString("house",""))
+  spinner.setSelection(prefs.getInt("region_index",0))
   FirebaseMessaging.getInstance().token.addOnSuccessListener{token->fcmToken=token;api.register(DeviceRegister(installId,token)).enqueue(simpleCallback())}
   findViewById<Button>(R.id.search).setOnClickListener{
    val regions=listOf("kyiv","dnipro-dtek","dnipro-cek")
    val street=findViewById<EditText>(R.id.street).text.toString().trim()
    val house=findViewById<EditText>(R.id.house).text.toString().trim()
    if(street.length<2||house.isEmpty()){Toast.makeText(this,"Вкажіть вулицю та будинок",Toast.LENGTH_SHORT).show();return@setOnClickListener}
+   prefs.edit().putString("street",street).putString("house",house).putInt("region_index",spinner.selectedItemPosition).apply()
    loadAddress(regions[spinner.selectedItemPosition],street,house)
   }
  }
