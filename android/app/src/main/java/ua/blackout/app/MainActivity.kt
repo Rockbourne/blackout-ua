@@ -60,6 +60,26 @@ class MainActivity:AppCompatActivity(){
    }
   })
   houseView.setOnClickListener{selectedStreetId?.let{loadHouses(regions[spinner.selectedItemPosition],it,houseView)}}
+  findViewById<Button>(R.id.testSchedule).setOnClickListener{
+   val now=ZonedDateTime.now()
+   fun hm(minutes:Int):String{val m=((now.hour*60+now.minute+minutes)%1440+1440)%1440;return "%02d:%02d".format(m/60,m%60)}
+   val date=now.toLocalDate().toString()
+   val today=DaySchedule(date,"SCHEDULED",listOf(Outage(date,hm(30),hm(150)),Outage(date,hm(300),hm(420))),listOf(
+    Slot("00:00",hm(30),"ON","NotPlanned"),Slot(hm(30),hm(150),"OFF","Definite"),Slot(hm(150),hm(300),"ON","NotPlanned"),Slot(hm(300),hm(420),"OFF","Definite"),Slot(hm(420),"24:00","ON","NotPlanned")
+   ))
+   val tomorrowDate=now.plusDays(1).toLocalDate().toString()
+   val tomorrow=DaySchedule(tomorrowDate,"SCHEDULED",listOf(Outage(tomorrowDate,"08:00","11:00"),Outage(tomorrowDate,"18:00","21:00")),listOf(
+    Slot("00:00","08:00","ON","NotPlanned"),Slot("08:00","11:00","OFF","Definite"),Slot("11:00","18:00","ON","NotPlanned"),Slot("18:00","21:00","OFF","Definite"),Slot("21:00","24:00","ON","NotPlanned")
+   ))
+   val current=CurrentState("ON",null,now.toString(),Outage(date,hm(30),hm(150)))
+   findViewById<TextView>(R.id.status).text="ТЕСТ · Світло має бути"
+   findViewById<TextView>(R.id.details).text="Тестові дані · група TEST"
+   renderNext(current)
+   findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(today,true)
+   findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(tomorrow,false)
+   findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",today)
+   findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",tomorrow)
+  }
   FirebaseMessaging.getInstance().token.addOnSuccessListener{token->fcmToken=token;api.register(DeviceRegister(installId,token)).enqueue(simpleCallback())}
   findViewById<Button>(R.id.search).setOnClickListener{
    val street=streetView.text.toString().trim()
