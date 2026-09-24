@@ -4,6 +4,14 @@ plugins {
     id("com.google.gms.google-services")
 }
 android {
+    signingConfigs {
+        create("stableDebug") {
+            storeFile = file(System.getenv("BLACKOUT_KEYSTORE_PATH") ?: "blackout-debug.keystore")
+            storePassword = System.getenv("BLACKOUT_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("BLACKOUT_KEY_ALIAS")
+            keyPassword = System.getenv("BLACKOUT_KEY_PASSWORD")
+        }
+    }
     namespace = "ua.blackout.app"
     compileSdk = 35
     compileOptions {
@@ -17,8 +25,13 @@ android {
         applicationId = "ua.blackout.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = System.getenv("BLACKOUT_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
+    }
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("stableDebug")
+        }
     }
 }
 dependencies {
