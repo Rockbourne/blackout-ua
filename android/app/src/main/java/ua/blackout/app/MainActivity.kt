@@ -69,9 +69,9 @@ class MainActivity:AppCompatActivity(){
     cities=emptyList();streets=emptyList();selectedStreetId=null
     streetView.setText("",false);houseView.setText("",false)
     citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження…"))
-    cherkasyDirect.cities(deptId=deptId).enqueue(object:Callback<List<CherkasyItem>>{
-     override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
-      cities=r.body().orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
+    api.cherkasyCities(deptId).enqueue(object:Callback<CherkasyItems>{
+     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+      cities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
       if(cities.isEmpty()){
        citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("Немає даних"))
        Toast.makeText(this@MainActivity,"Черкасиобленерго не повернуло населені пункти",Toast.LENGTH_LONG).show()
@@ -81,9 +81,9 @@ class MainActivity:AppCompatActivity(){
       val saved=prefs.getInt("cherkasy_city_index",0).coerceIn(0,cities.lastIndex)
       citySpinner.setSelection(saved,false)
      }
-     override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){
+     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){
       citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("Помилка завантаження"))
-      Toast.makeText(this@MainActivity,"Не вдалося завантажити населені пункти: ${t.javaClass.simpleName}",Toast.LENGTH_LONG).show()
+      Toast.makeText(this@MainActivity,"Не вдалося завантажити населені пункти через сервер",Toast.LENGTH_LONG).show()
      }
     })
    }
@@ -129,9 +129,9 @@ class MainActivity:AppCompatActivity(){
      val q=s?.toString()?.trim().orEmpty();if(q.length<2)return
      if(providers[providerSpinner.selectedItemPosition]=="cherkasyoblenergo"){
       val cityId=cities.getOrNull(citySpinner.selectedItemPosition)?.ID?.toIntOrNull()?:return
-      cherkasyDirect.streets(cityId=cityId,q=q).enqueue(object:Callback<List<CherkasyItem>>{
-       override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
-       streets=r.body().orEmpty()
+      api.cherkasyStreets(cityId,q).enqueue(object:Callback<CherkasyItems>{
+       override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+       streets=r.body()?.items.orEmpty()
        streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,streets.map{it.NAME?:""}))
        streetView.setOnItemClickListener{_,_,pos,_->
         selectedStreetId=streets.getOrNull(pos)?.ID?.toIntOrNull()
@@ -140,7 +140,7 @@ class MainActivity:AppCompatActivity(){
        }
        if(streets.isNotEmpty())streetView.showDropDown()
       }
-       override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){}
+       override fun onFailure(c:Call<CherkasyItems>,t:Throwable){}
       })
      }else{
       val region=yasnoRegions[regionSpinner.selectedItemPosition]
@@ -186,14 +186,14 @@ class MainActivity:AppCompatActivity(){
 
  private fun loadYasnoHouses(region:String,streetId:Int,view:AutoCompleteTextView){api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{override fun onResponse(c:Call<AddressItems>,r:Response<AddressItems>){val values=r.body()?.items?.mapNotNull{it.value}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<AddressItems>,t:Throwable){}})}
  private fun loadCherkasyHouses(streetId:Int,view:AutoCompleteTextView){
-  cherkasyDirect.houses(streetId=streetId).enqueue(object:Callback<List<CherkasyItem>>{
-   override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
-    val values=r.body().orEmpty().mapNotNull{it.HOUSE}
+  api.cherkasyHouses(streetId).enqueue(object:Callback<CherkasyItems>{
+   override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+    val values=r.body()?.items.orEmpty().mapNotNull{it.HOUSE}
     view.isEnabled=true;view.setText("",false)
     view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values))
     if(values.isNotEmpty())view.showDropDown()
    }
-   override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){view.isEnabled=true;view.setText("",false);Toast.makeText(this@MainActivity,"Не вдалося завантажити будинки",Toast.LENGTH_LONG).show()}
+   override fun onFailure(c:Call<CherkasyItems>,t:Throwable){view.isEnabled=true;view.setText("",false);Toast.makeText(this@MainActivity,"Не вдалося завантажити будинки",Toast.LENGTH_LONG).show()}
   })
  }
 
@@ -206,9 +206,9 @@ class MainActivity:AppCompatActivity(){
 
  private fun loadCherkasyAddress(streetId:Int,street:String,house:String){
   findViewById<TextView>(R.id.status).text="Шукаю…"
-  cherkasyDirect.accounts(streetId=streetId,house=house).enqueue(object:Callback<List<CherkasyAccount>>{
-   override fun onResponse(c:Call<List<CherkasyAccount>>,r:Response<List<CherkasyAccount>>){
-    val accounts=r.body().orEmpty();val ls=accounts.firstOrNull()?.LS
+  api.cherkasyAccounts(streetId,house).enqueue(object:Callback<CherkasyAccounts>{
+   override fun onResponse(c:Call<CherkasyAccounts>,r:Response<CherkasyAccounts>){
+    val accounts=r.body()?.items.orEmpty();val ls=accounts.firstOrNull()?.LS
     if(ls.isNullOrBlank()){findViewById<TextView>(R.id.status).text="Адресу не знайдено";return}
     val zone=ZoneId.of("Europe/Kyiv");val date=LocalDate.now(zone);val fmt=DateTimeFormatter.ofPattern("dd.MM.yyyy")
     api.cherkasyDisconnections(ls,date.format(fmt),date.plusDays(1).format(fmt)).enqueue(object:Callback<CherkasyDisconnections>{
@@ -222,7 +222,7 @@ class MainActivity:AppCompatActivity(){
      override fun onFailure(c2:Call<CherkasyDisconnections>,t:Throwable){findViewById<TextView>(R.id.status).text="Немає зв’язку"}
     })
    }
-   override fun onFailure(c:Call<List<CherkasyAccount>>,t:Throwable){findViewById<TextView>(R.id.status).text="Немає зв’язку"}
+   override fun onFailure(c:Call<CherkasyAccounts>,t:Throwable){findViewById<TextView>(R.id.status).text="Немає зв’язку"}
   })
  }
 
