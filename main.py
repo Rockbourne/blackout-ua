@@ -8,8 +8,9 @@ import asyncio
 import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.9.0")
+app = FastAPI(title="Blackout UA API", version="0.10.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -60,6 +61,25 @@ async def startup():
             delivered BOOLEAN NOT NULL DEFAULT FALSE
         )""")
         await conn.execute("""CREATE INDEX IF NOT EXISTS idx_change_events_lookup ON change_events(region, group_name, created_at DESC)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS devices (
+            id BIGSERIAL PRIMARY KEY,
+            installation_id TEXT UNIQUE NOT NULL,
+            fcm_token TEXT UNIQUE,
+            platform TEXT NOT NULL DEFAULT 'android',
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS device_subscriptions (
+            device_id BIGINT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            region TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            notify_changes BOOLEAN NOT NULL DEFAULT TRUE,
+            notify_before_minutes INTEGER NOT NULL DEFAULT 30,
+            PRIMARY KEY(device_id, provider, region, group_name)
+        )""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_subscriptions_group ON device_subscriptions(provider,region,group_name)""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS tracked_groups (
             provider TEXT NOT NULL,
             region TEXT NOT NULL,
@@ -80,9 +100,22 @@ async def shutdown():
     if db_pool:
         await db_pool.close()
 
+class DeviceRegister(BaseModel):
+    installation_id: str = Field(min_length=8, max_length=128)
+    fcm_token: str | None = Field(default=None, min_length=20, max_length=4096)
+    platform: str = Field(default="android", pattern="^(android|ios|web)$")
+
+class SubscriptionRequest(BaseModel):
+    installation_id: str = Field(min_length=8, max_length=128)
+    provider: str = "yasno"
+    region: str
+    group: str
+    notify_changes: bool = True
+    notify_before_minutes: int = Field(default=30, ge=0, le=1440)
+
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.9.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.10.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -472,3 +505,42 @@ async def pending_events_count():
     async with db_pool.acquire() as conn:
         count = await conn.fetchval("SELECT COUNT(*) FROM change_events WHERE delivered=FALSE")
     return {"pending": count}
+
+
+@app.post("/api/v1/devices/register")
+async def register_device(body: DeviceRegister):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO devices(installation_id,fcm_token,platform) VALUES($1,$2,$3) ON CONFLICT(installation_id) DO UPDATE SET fcm_token=EXCLUDED.fcm_token, platform=EXCLUDED.platform, enabled=TRUE, updated_at=NOW() RETURNING id,installation_id,platform,enabled",
+            body.installation_id, body.fcm_token, body.platform
+        )
+    return dict(row)
+
+@app.post("/api/v1/subscriptions")
+async def subscribe(body: SubscriptionRequest):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    if body.provider != "yasno" or body.region not in YASNO_REGIONS:
+        raise HTTPException(status_code=400, detail="Unsupported provider or region")
+    async with db_pool.acquire() as conn:
+        device_id = await conn.fetchval("SELECT id FROM devices WHERE installation_id=$1 AND enabled=TRUE", body.installation_id)
+        if not device_id:
+            raise HTTPException(status_code=404, detail="Device is not registered")
+        await conn.execute(
+            "INSERT INTO device_subscriptions(device_id,provider,region,group_name,notify_changes,notify_before_minutes) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,provider,region,group_name) DO UPDATE SET notify_changes=EXCLUDED.notify_changes, notify_before_minutes=EXCLUDED.notify_before_minutes",
+            device_id, body.provider, body.region, body.group, body.notify_changes, body.notify_before_minutes
+        )
+    await track_group(body.region, body.group)
+    return {"subscribed": True, "provider": body.provider, "region": body.region, "group": body.group, "notify_changes": body.notify_changes, "notify_before_minutes": body.notify_before_minutes}
+
+@app.get("/api/v1/subscriptions/{installation_id}")
+async def subscriptions(installation_id: str):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT s.provider,s.region,s.group_name,s.notify_changes,s.notify_before_minutes FROM device_subscriptions s JOIN devices d ON d.id=s.device_id WHERE d.installation_id=$1 AND d.enabled=TRUE ORDER BY s.region,s.group_name", installation_id)
+    return {"installation_id": installation_id, "subscriptions": [
+        {"provider": r["provider"], "region": r["region"], "group": r["group_name"], "notify_changes": r["notify_changes"], "notify_before_minutes": r["notify_before_minutes"]} for r in rows
+    ]}
