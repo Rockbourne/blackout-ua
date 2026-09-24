@@ -28,7 +28,13 @@ class MainActivity:AppCompatActivity(){
   val houseView=findViewById<AutoCompleteTextView>(R.id.house)
   spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Київ","Дніпро · ДТЕК","Дніпро · ЦЕК"))
   val prefs=getSharedPreferences("blackout",MODE_PRIVATE)
+  val sunSwitch=findViewById<Switch>(R.id.showSun)
+
   spinner.setSelection(prefs.getInt("region_index",0))
+  sunSwitch.isChecked=prefs.getBoolean("show_sun",true)
+  fun applySun(){val on=sunSwitch.isChecked;findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSun(on,"06:45","18:52");findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSun(on,"06:47","18:50")}
+  applySun()
+  sunSwitch.setOnCheckedChangeListener{_,on->prefs.edit().putBoolean("show_sun",on).apply();applySun()}
   streetView.setText(prefs.getString("street",""),false)
   houseView.setText(prefs.getString("house",""),false)
   streetView.addTextChangedListener(object:TextWatcher{
