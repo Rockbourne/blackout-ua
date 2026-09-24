@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.31.3")
+app = FastAPI(title="Blackout UA API", version="0.32.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -414,6 +414,15 @@ async def cherkasy_gpv_resolve(
                         street_end = k
                         break
                 local = " ".join(lines[j:street_end])
+                # Reject rows where the requested street name is immediately followed
+                # by another word (e.g. "Смілянське шосе"). PDF extraction may truncate
+                # inflections, so the generic marker alone is not sufficient.
+                street_n = _gpv_norm(street)
+                exact_street_re = re.compile(
+                    rf"(?:^|\\s)(?:вул|вулиця)\\.?\\s+{re.escape(street_n)}(?=\\s+\\d|\\s*$)"
+                )
+                if not exact_street_re.search(local):
+                    continue
                 if _gpv_house_matches(local, house):
                     results.append({
                         "group": d["group"],
