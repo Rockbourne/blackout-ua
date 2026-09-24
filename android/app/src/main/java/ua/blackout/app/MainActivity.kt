@@ -21,6 +21,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 class MainActivity:AppCompatActivity(){
  private val api by lazy { Retrofit.Builder().baseUrl("https://blackout-ua-api.onrender.com/").addConverterFactory(GsonConverterFactory.create()).build().create(Api::class.java) }
+ private val cherkasyDirect by lazy { Retrofit.Builder().baseUrl("https://cabinet.cherkasyoblenergo.com/").addConverterFactory(GsonConverterFactory.create()).build().create(CherkasyDirectApi::class.java) }
  private val installId by lazy { Settings.Secure.getString(contentResolver,Settings.Secure.ANDROID_ID) }
  private val providers=listOf("yasno","cherkasyoblenergo")
  private val providerLabels=listOf("YASNO","Черкасиобленерго")
@@ -68,12 +69,11 @@ class MainActivity:AppCompatActivity(){
     citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження…"))
     api.cherkasyCities(deptId).enqueue(object:Callback<CherkasyItems>{
      override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
-      cities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
-      citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!})
-      if(cities.isNotEmpty()){citySpinner.setSelection(0,false);streetView.setText("",false);houseView.setText("",false)}
-      else Toast.makeText(this@MainActivity,"Для цієї філії населені пункти не отримані",Toast.LENGTH_LONG).show()
+      val backendCities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
+      if(backendCities.isNotEmpty())applyCherkasyCities(backendCities,citySpinner,streetView,houseView)
+      else loadCherkasyCitiesDirect(deptId,citySpinner,streetView,houseView)
      }
-     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Помилка завантаження населених пунктів",Toast.LENGTH_LONG).show()}
+     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){loadCherkasyCitiesDirect(deptId,citySpinner,streetView,houseView)}
     })
    }
    fun setupCherkasy(){
@@ -171,6 +171,22 @@ class MainActivity:AppCompatActivity(){
    manager.notify(4242,notification)
   }
   FirebaseMessaging.getInstance().token.addOnSuccessListener{token->fcmToken=token;api.register(DeviceRegister(installId,token)).enqueue(simpleCallback())}
+ }
+
+ private fun applyCherkasyCities(items:List<CherkasyItem>,citySpinner:Spinner,streetView:AutoCompleteTextView,houseView:AutoCompleteTextView){
+  cities=items
+  citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!})
+  citySpinner.setSelection(0,false);streetView.setText("",false);houseView.setText("",false)
+ }
+ private fun loadCherkasyCitiesDirect(deptId:Int,citySpinner:Spinner,streetView:AutoCompleteTextView,houseView:AutoCompleteTextView){
+  cherkasyDirect.cities(deptId=deptId).enqueue(object:Callback<List<CherkasyItem>>{
+   override fun onResponse(c:Call<List<CherkasyItem>>,r:Response<List<CherkasyItem>>){
+    val items=r.body().orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
+    if(items.isNotEmpty())applyCherkasyCities(items,citySpinner,streetView,houseView)
+    else Toast.makeText(this@MainActivity,"Черкасиобленерго не повернуло населені пункти",Toast.LENGTH_LONG).show()
+   }
+   override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){Toast.makeText(this@MainActivity,"Помилка з’єднання з Черкасиобленерго: ${t.javaClass.simpleName}",Toast.LENGTH_LONG).show()}
+  })
  }
 
  private fun loadYasnoHouses(region:String,streetId:Int,view:AutoCompleteTextView){api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{override fun onResponse(c:Call<AddressItems>,r:Response<AddressItems>){val values=r.body()?.items?.mapNotNull{it.value}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<AddressItems>,t:Throwable){}})}
