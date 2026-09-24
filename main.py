@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.31.1")
+app = FastAPI(title="Blackout UA API", version="0.31.2")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -417,7 +417,8 @@ async def cherkasy_gpv_resolve(
                     results.append({
                         "group": d["group"],
                         "confidence": "exact_or_range",
-                        "settlement_context": settlement_context,\n                        "scope_type": scope_type,
+                        "settlement_context": settlement_context,
+                        "scope_type": scope_type,
                         "address_context": local[:700],
                         "source_url": d["url"],
                     })
