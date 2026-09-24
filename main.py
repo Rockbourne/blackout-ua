@@ -9,7 +9,7 @@ import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.8.0")
+app = FastAPI(title="Blackout UA API", version="0.9.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -48,6 +48,18 @@ async def startup():
         )""")
         await conn.execute("""CREATE INDEX IF NOT EXISTS idx_snapshots_lookup
             ON schedule_snapshots(provider, region, group_name, fetched_at DESC)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS change_events (
+            id BIGSERIAL PRIMARY KEY,
+            provider TEXT NOT NULL,
+            region TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            snapshot_id BIGINT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            delivered BOOLEAN NOT NULL DEFAULT FALSE
+        )""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_change_events_lookup ON change_events(region, group_name, created_at DESC)""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS tracked_groups (
             provider TEXT NOT NULL,
             region TEXT NOT NULL,
@@ -70,7 +82,7 @@ async def shutdown():
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.8.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.9.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -270,6 +282,11 @@ async def save_snapshot(schedule: dict) -> dict:
             schedule["provider"], schedule["region"], schedule["group"], schedule.get("provider_updated_at"), digest, json.dumps(schedule, ensure_ascii=False)
         )
         changes = outage_diff(previous["payload"], schedule) if previous else []
+        for change in changes:
+            await conn.execute(
+                "INSERT INTO change_events(provider,region,group_name,snapshot_id,event_type,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+                schedule["provider"], schedule["region"], schedule["group"], row["id"], change["type"], json.dumps(change, ensure_ascii=False)
+            )
         return {"database": "connected", "saved": True, "changed": previous is not None, "snapshot_id": row["id"], "previous_snapshot_id": previous["id"] if previous else None, "changes": changes}
 
 def time_to_minute(value: str) -> int:
@@ -432,3 +449,26 @@ async def monitor_status():
     async with db_pool.acquire() as conn:
         count = await conn.fetchval("SELECT COUNT(*) FROM tracked_groups")
     return {"running": poll_task is not None and not poll_task.done(), "interval_seconds": POLL_INTERVAL_SECONDS, "tracked_groups": count}
+
+
+@app.get("/api/v1/events/{region}/{group}")
+async def change_events(region: str, group: str, limit: int = Query(50, ge=1, le=200)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, snapshot_id, event_type, payload, created_at, delivered FROM change_events WHERE region=$1 AND group_name=$2 ORDER BY created_at DESC LIMIT $3",
+            region, group, limit
+        )
+    return {"region": region, "group": group, "events": [
+        {"id": r["id"], "snapshot_id": r["snapshot_id"], "type": r["event_type"], "payload": r["payload"], "created_at": r["created_at"].isoformat(), "delivered": r["delivered"]}
+        for r in rows
+    ]}
+
+@app.get("/api/v1/events/pending/count")
+async def pending_events_count():
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM change_events WHERE delivered=FALSE")
+    return {"pending": count}
