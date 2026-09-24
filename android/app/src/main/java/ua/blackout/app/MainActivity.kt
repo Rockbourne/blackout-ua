@@ -6,6 +6,8 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.*
+import java.time.Duration
+import java.time.ZonedDateTime
 import androidx.appcompat.app.AppCompatActivity
 import com.google.firebase.messaging.FirebaseMessaging
 import retrofit2.*
@@ -85,12 +87,27 @@ class MainActivity:AppCompatActivity(){
     val s=body.schedules.firstOrNull()?:return
     findViewById<TextView>(R.id.status).text=when(s.current.status){"ON"->"Світло має бути";"OFF"->"Планове відключення";else->"Статус невідомий"}
     findViewById<TextView>(R.id.details).text="${body.address.street.value}, ${body.address.house.value} · група ${s.group}"
+    renderNext(s.current)
+    val now=ZonedDateTime.now()
+    findViewById<ProgressBar>(R.id.todayTimeline).progress=now.hour*60+now.minute
     findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",s.today)
     findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",s.tomorrow)
     if(fcmToken!=null)api.subscribe(Subscription(installId,region=region,group=s.group)).enqueue(simpleCallback())
    }
    override fun onFailure(c:Call<AddressOutages>,t:Throwable){findViewById<TextView>(R.id.status).text="Немає зв’язку"}
   })
+ }
+ private fun renderNext(current:CurrentState){
+  val countdown=findViewById<TextView>(R.id.countdown)
+  val next=findViewById<TextView>(R.id.nextOutage)
+  val outage=current.next_outage
+  if(outage==null){countdown.text="";next.text="Наступних відключень у графіку немає";return}
+  next.text="Наступне відключення: ${outage.date} · ${outage.start}–${outage.end}"
+  try{
+   val start=ZonedDateTime.parse("${outage.date}T${outage.start}:00+03:00")
+   val mins=Duration.between(ZonedDateTime.now(),start).toMinutes()
+   countdown.text=if(mins>0)"До відключення: ${mins/60} год ${mins%60} хв" else ""
+  }catch(_:Exception){countdown.text=""}
  }
  private fun formatDay(title:String,d:DaySchedule):String{
   val times=if(d.outages.isEmpty())"відключень не заплановано" else d.outages.joinToString("\n"){"${it.start}–${it.end}"}
