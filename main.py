@@ -7,10 +7,12 @@ import hashlib
 import asyncio
 import httpx
 import asyncpg
+import firebase_admin
+from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.10.0")
+app = FastAPI(title="Blackout UA API", version="0.11.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -29,10 +31,17 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 POLL_INTERVAL_SECONDS = max(60, int(os.getenv("POLL_INTERVAL_SECONDS", "300")))
 poll_task = None
 db_pool = None
+firebase_app = None
 
 @app.on_event("startup")
 async def startup():
-    global db_pool, poll_task
+    global db_pool, poll_task, firebase_app
+    firebase_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if firebase_json:
+        try:
+            firebase_app = firebase_admin.initialize_app(credentials.Certificate(json.loads(firebase_json)))
+        except (ValueError, KeyError):
+            firebase_app = None
     if not DATABASE_URL:
         return
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
@@ -88,6 +97,7 @@ async def startup():
             PRIMARY KEY(provider, region, group_name)
         )""")
     poll_task = asyncio.create_task(poll_loop())
+    asyncio.create_task(push_loop())
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -115,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.10.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.11.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -383,6 +393,57 @@ async def poll_once() -> dict:
             continue
     return {"checked": checked, "changed": changed}
 
+
+def notification_text(event_type: str, payload: dict) -> tuple[str, str]:
+    date = payload.get("date", "")
+    if event_type == "OUTAGE_ADDED":
+        return "Додано відключення", f'{date}: {payload.get("start")}–{payload.get("end")}'
+    if event_type == "OUTAGE_REMOVED":
+        return "Відключення скасовано", f'{date}: {payload.get("start")}–{payload.get("end")}'
+    if event_type == "DAY_STATUS_CHANGED":
+        return "Графік змінився", f'{date}: {payload.get("from")} → {payload.get("to")}'
+    return "Графік змінився", date
+
+async def deliver_pending_events() -> dict:
+    if not db_pool or not firebase_app:
+        return {"sent": 0, "firebase": "disabled" if not firebase_app else "ready"}
+    async with db_pool.acquire() as conn:
+        events = await conn.fetch("SELECT id,provider,region,group_name,event_type,payload FROM change_events WHERE delivered=FALSE ORDER BY id LIMIT 50")
+    sent = 0
+    for event in events:
+        async with db_pool.acquire() as conn:
+            tokens = await conn.fetch(
+                """SELECT DISTINCT d.fcm_token FROM device_subscriptions s
+                JOIN devices d ON d.id=s.device_id
+                WHERE s.provider=$1 AND s.region=$2 AND s.group_name=$3 AND s.notify_changes=TRUE
+                AND d.enabled=TRUE AND d.fcm_token IS NOT NULL""",
+                event["provider"], event["region"], event["group_name"]
+            )
+        title, body = notification_text(event["event_type"], event["payload"])
+        all_ok = True
+        for row in tokens:
+            try:
+                await asyncio.to_thread(messaging.send, messaging.Message(
+                    token=row["fcm_token"],
+                    notification=messaging.Notification(title=title, body=body),
+                    data={"type": event["event_type"], "region": event["region"], "group": event["group_name"], "event_id": str(event["id"])}
+                ), app=firebase_app)
+                sent += 1
+            except Exception:
+                all_ok = False
+        if all_ok and tokens:
+            async with db_pool.acquire() as conn:
+                await conn.execute("UPDATE change_events SET delivered=TRUE WHERE id=$1", event["id"])
+    return {"sent": sent, "firebase": "ready"}
+
+async def push_loop():
+    while True:
+        try:
+            await deliver_pending_events()
+        except Exception:
+            pass
+        await asyncio.sleep(30)
+
 async def poll_loop():
     while True:
         try:
@@ -481,7 +542,7 @@ async def monitor_status():
         raise HTTPException(status_code=503, detail="Database is not configured")
     async with db_pool.acquire() as conn:
         count = await conn.fetchval("SELECT COUNT(*) FROM tracked_groups")
-    return {"running": poll_task is not None and not poll_task.done(), "interval_seconds": POLL_INTERVAL_SECONDS, "tracked_groups": count}
+    return {"running": poll_task is not None and not poll_task.done(), "interval_seconds": POLL_INTERVAL_SECONDS, "tracked_groups": count, "firebase": "ready" if firebase_app else "disabled"}
 
 
 @app.get("/api/v1/events/{region}/{group}")
@@ -544,3 +605,14 @@ async def subscriptions(installation_id: str):
     return {"installation_id": installation_id, "subscriptions": [
         {"provider": r["provider"], "region": r["region"], "group": r["group_name"], "notify_changes": r["notify_changes"], "notify_before_minutes": r["notify_before_minutes"]} for r in rows
     ]}
+
+
+@app.get("/api/v1/push/status")
+async def push_status():
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        devices = await conn.fetchval("SELECT COUNT(*) FROM devices WHERE enabled=TRUE")
+        tokens = await conn.fetchval("SELECT COUNT(*) FROM devices WHERE enabled=TRUE AND fcm_token IS NOT NULL")
+        pending = await conn.fetchval("SELECT COUNT(*) FROM change_events WHERE delivered=FALSE")
+    return {"firebase": "ready" if firebase_app else "disabled", "devices": devices, "tokens": tokens, "pending_events": pending}
