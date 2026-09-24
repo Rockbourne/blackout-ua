@@ -182,8 +182,11 @@ class MainActivity:AppCompatActivity(){
 
  private fun renderDays(today:DaySchedule,tomorrow:DaySchedule){findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(today,true);findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(tomorrow,false);findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",today);findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",tomorrow)}
  private fun renderNext(current:CurrentState){val countdown=findViewById<TextView>(R.id.countdown);val next=findViewById<TextView>(R.id.nextOutage);val outage=current.next_outage;if(outage==null){countdown.text="";next.text="Наступних відключень у графіку немає";return};next.text="Наступне відключення: ${outage.date} · ${outage.start}–${outage.end}";try{val zone=ZoneId.of("Europe/Kyiv");val start=LocalDateTime.parse("${outage.date}T${outage.start}:00").atZone(zone);val mins=Duration.between(ZonedDateTime.now(zone),start).toMinutes();countdown.text=if(mins>0)"До відключення: ${mins/60} год ${mins%60} хв" else ""}catch(_:Exception){countdown.text=""}}
- private fun formatDay(title:String,d:DaySchedule):String{val times=if(d.outages.isEmpty())if(d.status=="UNKNOWN")"немає підтверджених даних" else "відключень не заплановано" else d.outages.joinToString("
-"){"${it.start}–${it.end}"};return "$title · ${d.date ?: ""}
-$times"}
+ private fun formatDay(title:String,d:DaySchedule):String{
+  val times=if(d.outages.isEmpty()){
+   if(d.status=="UNKNOWN") "немає підтверджених даних" else "відключень не заплановано"
+  }else d.outages.joinToString("\n"){"${it.start}–${it.end}"}
+  return "$title · ${d.date ?: ""}\n$times"
+ }
  private fun simpleCallback()=object:Callback<Map<String,Any>>{override fun onResponse(c:Call<Map<String,Any>>,r:Response<Map<String,Any>>){};override fun onFailure(c:Call<Map<String,Any>>,t:Throwable){}}
 }
