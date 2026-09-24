@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.31.2")
+app = FastAPI(title="Blackout UA API", version="0.31.3")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -386,6 +386,7 @@ async def cherkasy_gpv_resolve(
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
 
+    settlement_n = _gpv_norm(settlement)
     results = []
     for d in docs:
         lines = [_gpv_norm(x) for x in d.get("text", "").splitlines() if _gpv_norm(x)]
