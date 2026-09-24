@@ -7,7 +7,7 @@ import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.5.0")
+app = FastAPI(title="Blackout UA API", version="0.6.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -52,7 +52,7 @@ async def shutdown():
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.5.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.6.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -221,22 +221,38 @@ def schedule_hash(schedule: dict) -> str:
     raw = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 
+def outage_diff(previous: dict, current: dict) -> list:
+    changes = []
+    for key in ("today", "tomorrow"):
+        old_day, new_day = previous.get(key) or {}, current.get(key) or {}
+        date = new_day.get("date") or old_day.get("date")
+        old_outages = {(x.get("start"), x.get("end")) for x in old_day.get("outages") or []}
+        new_outages = {(x.get("start"), x.get("end")) for x in new_day.get("outages") or []}
+        if old_day.get("status") != new_day.get("status"):
+            changes.append({"type": "DAY_STATUS_CHANGED", "date": date, "from": old_day.get("status"), "to": new_day.get("status")})
+        for start, end in sorted(new_outages - old_outages):
+            changes.append({"type": "OUTAGE_ADDED", "date": date, "start": start, "end": end})
+        for start, end in sorted(old_outages - new_outages):
+            changes.append({"type": "OUTAGE_REMOVED", "date": date, "start": start, "end": end})
+    return changes
+
 async def save_snapshot(schedule: dict) -> dict:
     if not db_pool:
         return {"database": "disabled", "saved": False, "changed": None}
     digest = schedule_hash(schedule)
     async with db_pool.acquire() as conn:
         previous = await conn.fetchrow(
-            "SELECT id, content_hash FROM schedule_snapshots WHERE provider=$1 AND region=$2 AND group_name=$3 ORDER BY fetched_at DESC LIMIT 1",
+            "SELECT id, content_hash, payload FROM schedule_snapshots WHERE provider=$1 AND region=$2 AND group_name=$3 ORDER BY fetched_at DESC LIMIT 1",
             schedule["provider"], schedule["region"], schedule["group"]
         )
         if previous and previous["content_hash"] == digest:
-            return {"database": "connected", "saved": False, "changed": False, "snapshot_id": previous["id"]}
+            return {"database": "connected", "saved": False, "changed": False, "snapshot_id": previous["id"], "changes": []}
         row = await conn.fetchrow(
             "INSERT INTO schedule_snapshots(provider,region,group_name,provider_updated_at,content_hash,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING id",
             schedule["provider"], schedule["region"], schedule["group"], schedule.get("provider_updated_at"), digest, json.dumps(schedule, ensure_ascii=False)
         )
-        return {"database": "connected", "saved": True, "changed": previous is not None, "snapshot_id": row["id"], "previous_snapshot_id": previous["id"] if previous else None}
+        changes = outage_diff(previous["payload"], schedule) if previous else []
+        return {"database": "connected", "saved": True, "changed": previous is not None, "snapshot_id": row["id"], "previous_snapshot_id": previous["id"] if previous else None, "changes": changes}
 
 async def get_outages(region: str, group: str) -> dict:
     config = YASNO_REGIONS.get(region)
