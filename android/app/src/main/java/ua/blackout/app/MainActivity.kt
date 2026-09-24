@@ -6,7 +6,10 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.*
-import android.app.AlertDialog\nimport android.app.NotificationChannel\nimport android.app.NotificationManager\nimport androidx.core.app.NotificationCompat
+import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
 import android.view.LayoutInflater
 import android.view.View
 import java.time.*
