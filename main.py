@@ -4,11 +4,12 @@ import re
 import os
 import json
 import hashlib
+import asyncio
 import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.7.0")
+app = FastAPI(title="Blackout UA API", version="0.8.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -24,11 +25,13 @@ STATUS_MAP = {
 }
 STREET_STOPWORDS = {"вул", "вулиця", "просп", "проспект", "пров", "провулок", "бул", "бульвар", "пл", "площа"}
 DATABASE_URL = os.getenv("DATABASE_URL")
+POLL_INTERVAL_SECONDS = max(60, int(os.getenv("POLL_INTERVAL_SECONDS", "300")))
+poll_task = None
 db_pool = None
 
 @app.on_event("startup")
 async def startup():
-    global db_pool
+    global db_pool, poll_task
     if not DATABASE_URL:
         return
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
@@ -45,15 +48,29 @@ async def startup():
         )""")
         await conn.execute("""CREATE INDEX IF NOT EXISTS idx_snapshots_lookup
             ON schedule_snapshots(provider, region, group_name, fetched_at DESC)""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS tracked_groups (
+            provider TEXT NOT NULL,
+            region TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(provider, region, group_name)
+        )""")
+    poll_task = asyncio.create_task(poll_loop())
 
 @app.on_event("shutdown")
 async def shutdown():
+    if poll_task:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
     if db_pool:
         await db_pool.close()
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.7.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.8.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -290,7 +307,41 @@ def current_summary(schedule: dict) -> dict:
     candidates.sort(key=lambda x: (x["date"], x["start"]))
     return {"status": status, "until": until, "checked_at": now.isoformat(), "next_outage": candidates[0] if candidates else None}
 
-async def get_outages(region: str, group: str) -> dict:
+
+async def track_group(region: str, group: str):
+    if not db_pool:
+        return
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO tracked_groups(provider,region,group_name) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+            "yasno", region, group
+        )
+
+async def poll_once() -> dict:
+    if not db_pool:
+        return {"checked": 0, "changed": 0}
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT region, group_name FROM tracked_groups WHERE provider='yasno'")
+    checked = changed = 0
+    for row in rows:
+        try:
+            result = await get_outages(row["region"], row["group_name"], track=False)
+            checked += 1
+            if result.get("snapshot", {}).get("changed"):
+                changed += 1
+        except Exception:
+            continue
+    return {"checked": checked, "changed": changed}
+
+async def poll_loop():
+    while True:
+        try:
+            await poll_once()
+        except Exception:
+            pass
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+async def get_outages(region: str, group: str, track: bool = True) -> dict:
     config = YASNO_REGIONS.get(region)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
@@ -312,6 +363,8 @@ async def get_outages(region: str, group: str) -> dict:
         "tomorrow": normalize_day(group_data.get("tomorrow") or {}),
     }
     result["current"] = current_summary(result)
+    if track:
+        await track_group(region, group)
     result["snapshot"] = await save_snapshot(result)
     return result
 
@@ -370,3 +423,12 @@ async def history(region: str, group: str, limit: int = Query(20, ge=1, le=100))
         {"id": r["id"], "provider": r["provider"], "provider_updated_at": r["provider_updated_at"], "fetched_at": r["fetched_at"].isoformat(), "schedule": r["payload"]}
         for r in rows
     ]}
+
+
+@app.get("/api/v1/monitor/status")
+async def monitor_status():
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    async with db_pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM tracked_groups")
+    return {"running": poll_task is not None and not poll_task.done(), "interval_seconds": POLL_INTERVAL_SECONDS, "tracked_groups": count}
