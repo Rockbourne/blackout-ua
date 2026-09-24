@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.27.0")
+app = FastAPI(title="Blackout UA API", version="0.28.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -301,7 +301,7 @@ async def _load_cherkasy_gpv(force: bool = False):
             pdf.raise_for_status()
             reader = PdfReader(io.BytesIO(pdf.content))
             text = "\n".join((p.extract_text() or "") for p in reader.pages)
-            docs.append({"group": group, "url": url, "normalized": _gpv_norm(text), "pages": len(reader.pages)})
+            docs.append({"group": group, "url": url, "text": text, "normalized": _gpv_norm(text), "pages": len(reader.pages)})
     cherkasy_gpv_cache = {"loaded_at": now, "documents": docs}
     return docs
 
@@ -320,48 +320,101 @@ async def cherkasy_gpv_search(q: str = Query(..., min_length=3)):
         docs = await _load_cherkasy_gpv()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
+
+    # This endpoint is intentionally a text diagnostic, not an address resolver.
+    # PDF rows often omit/repeat settlement names, so a free-text query such as
+    # "Черкаси Смілянська" cannot safely distinguish м. Черкаси from
+    # Черкасиобленерго/Черкасигаз/Смілянська філія.
     needle = _gpv_norm(q)
-    tokens = [t for t in needle.split() if len(t) >= 2]
     matches = []
-    # A document-wide token AND is useless here: e.g. "Черкаси" can occur in a
-    # company name/header while "Смілянська" occurs hundreds of lines later.
-    # Require the query terms to occur in the same local address-sized window.
-    window_radius = 260
     for d in docs:
         hay = d["normalized"]
-        candidates = []
-        if needle and needle in hay:
-            start = 0
-            while True:
-                pos = hay.find(needle, start)
-                if pos < 0:
-                    break
-                candidates.append((pos, "exact_phrase"))
-                start = pos + max(1, len(needle))
-        elif tokens:
-            anchor = tokens[-1]  # street/house is normally the most selective term
-            start = 0
-            while True:
-                pos = hay.find(anchor, start)
-                if pos < 0:
-                    break
-                lo = max(0, pos - window_radius)
-                hi = min(len(hay), pos + len(anchor) + window_radius)
-                local = hay[lo:hi]
-                if all(t in local for t in tokens):
-                    candidates.append((pos, "local_tokens"))
-                start = pos + max(1, len(anchor))
-        if candidates:
-            pos, match_type = candidates[0]
-            lo = max(0, pos - 180)
-            hi = min(len(hay), pos + len(needle) + 240)
+        pos = hay.find(needle)
+        if pos >= 0:
             matches.append({
                 "group": d["group"],
-                "match_type": match_type,
-                "context": hay[lo:hi],
+                "match_type": "exact_phrase",
+                "context": hay[max(0,pos-180):min(len(hay),pos+len(needle)+240)],
                 "source_url": d["url"],
             })
-    return {"query": q, "matches": matches, "ambiguous": len(matches) != 1}
+    return {
+        "query": q,
+        "mode": "diagnostic_exact_phrase",
+        "matches": matches,
+        "ambiguous": len(matches) != 1,
+        "note": "Use /api/v1/cherkasy/gpv/resolve for address resolution.",
+    }
+
+def _gpv_house_matches(spec: str, house: str) -> bool:
+    target = _gpv_norm(house).replace(" ", "")
+    if not target:
+        return False
+    spec_n = _gpv_norm(spec)
+    # Exact house tokens including slash/suffix.
+    tokens = re.findall(r"\d+(?:[/.-]\d+)?(?:[а-яa-z])?", spec_n)
+    if target in {t.replace(" ", "") for t in tokens}:
+        return True
+    # Conservative numeric ranges only. Never infer odd/even unless source says so.
+    if target.isdigit():
+        n = int(target)
+        for a, b in re.findall(r"(?<!\d)(\d{1,4})\s*-\s*(\d{1,4})(?!\d)", spec_n):
+            if int(a) <= n <= int(b):
+                return True
+    return False
+
+@app.get("/api/v1/cherkasy/gpv/resolve")
+async def cherkasy_gpv_resolve(
+    settlement: str = Query(..., min_length=2),
+    street: str = Query(..., min_length=2),
+    house: str = Query(..., min_length=1),
+):
+    try:
+        docs = await _load_cherkasy_gpv()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
+
+    settlement_n, street_n = _gpv_norm(settlement), _gpv_norm(street)
+    results = []
+    # Keep line boundaries from PDF extraction. Address resolution must be local:
+    # settlement marker -> nearby street row -> house specification.
+    for d in docs:
+        lines = [_gpv_norm(x) for x in d.get("text", "").splitlines() if _gpv_norm(x)]
+        settlement_hits = [i for i, line in enumerate(lines) if settlement_n in line]
+        for si in settlement_hits:
+            # Settlement sections in these PDFs are compact, but can span many rows.
+            # Stop at a new explicit settlement marker where possible.
+            section_end = min(len(lines), si + 80)
+            for j in range(si, section_end):
+                line = lines[j]
+                if street_n not in line:
+                    continue
+                local = " ".join(lines[j:min(section_end, j + 3)])
+                if _gpv_house_matches(local, house):
+                    results.append({
+                        "group": d["group"],
+                        "confidence": "exact_or_range",
+                        "settlement_context": lines[si],
+                        "address_context": local[:700],
+                        "source_url": d["url"],
+                    })
+                    break
+
+    # Deduplicate repeated PDF extraction rows.
+    unique = {}
+    for item in results:
+        unique[(item["group"], item["address_context"])] = item
+    results = list(unique.values())
+    groups = sorted({x["group"] for x in results}, key=lambda x: tuple(map(int, x.split("."))))
+    return {
+        "settlement": settlement,
+        "street": street,
+        "house": house,
+        "groups": groups,
+        "resolved": groups[0] if len(groups) == 1 else None,
+        "ambiguous": len(groups) > 1,
+        "not_found": len(groups) == 0,
+        "matches": results,
+    }
 
 CHERKASY_DEPARTMENTS = [
     {"ID":"1","NAME":"Черкаські міські енергетичні мережі"},
