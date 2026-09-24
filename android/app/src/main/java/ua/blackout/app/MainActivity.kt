@@ -6,7 +6,7 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.*
-import android.app.AlertDialog
+import android.app.AlertDialog\nimport android.app.NotificationChannel\nimport android.app.NotificationManager\nimport androidx.core.app.NotificationCompat
 import android.view.LayoutInflater
 import android.view.View
 import java.time.*
@@ -149,11 +149,23 @@ class MainActivity:AppCompatActivity(){
 
   findViewById<Button>(R.id.testSchedule).setOnClickListener{
    val now=ZonedDateTime.now(ZoneId.of("Europe/Kyiv"));fun hm(minutes:Int):String{val m=(now.hour*60+now.minute+minutes).coerceIn(0,1439);return "%02d:%02d".format(m/60,m%60)}
-   val date=now.toLocalDate().toString();val firstStart=hm(30);val firstEnd=hm(150);val secondStart=hm(300);val secondEnd=hm(420)
+   val date=now.toLocalDate().toString();val firstStart=hm(31);val firstEnd=hm(151);val secondStart=hm(300);val secondEnd=hm(420)
    val todayOutages=mutableListOf(Outage(date,firstStart,firstEnd));val todaySlots=mutableListOf(Slot("00:00",firstStart,"ON","NotPlanned"),Slot(firstStart,firstEnd,"OFF","Definite"))
    if(secondStart>firstEnd&&secondEnd>secondStart){todayOutages.add(Outage(date,secondStart,secondEnd));todaySlots.add(Slot(firstEnd,secondStart,"ON","NotPlanned"));todaySlots.add(Slot(secondStart,secondEnd,"OFF","Definite"));todaySlots.add(Slot(secondEnd,"24:00","ON","NotPlanned"))}else todaySlots.add(Slot(firstEnd,"24:00","ON","NotPlanned"))
    val today=DaySchedule(date,"SCHEDULED",todayOutages,todaySlots);val td=now.plusDays(1).toLocalDate().toString();val tomorrow=DaySchedule(td,"SCHEDULED",listOf(Outage(td,"08:00","11:00"),Outage(td,"18:00","21:00")),listOf(Slot("00:00","08:00","ON","NotPlanned"),Slot("08:00","11:00","OFF","Definite"),Slot("11:00","18:00","ON","NotPlanned"),Slot("18:00","21:00","OFF","Definite"),Slot("21:00","24:00","ON","NotPlanned")))
    findViewById<TextView>(R.id.status).text="ТЕСТ · Світло має бути";findViewById<TextView>(R.id.details).text="Тестові дані · група TEST";renderNext(CurrentState("ON",null,now.toString(),Outage(date,firstStart,firstEnd)));renderDays(today,tomorrow)
+  }
+  findViewById<Button>(R.id.testNotification).setOnClickListener{
+   val manager=getSystemService(NotificationManager::class.java)
+   val channel="outage_changes"
+   manager.createNotificationChannel(NotificationChannel(channel,"Зміни графіка",NotificationManager.IMPORTANCE_HIGH))
+   val notification=NotificationCompat.Builder(this,channel)
+    .setSmallIcon(android.R.drawable.ic_dialog_info)
+    .setContentTitle("Blackout UA · тест")
+    .setContentText("Тестове сповіщення: до відключення 30 хв")
+    .setPriority(NotificationCompat.PRIORITY_HIGH)
+    .setAutoCancel(true).build()
+   manager.notify(4242,notification)
   }
   FirebaseMessaging.getInstance().token.addOnSuccessListener{token->fcmToken=token;api.register(DeviceRegister(installId,token)).enqueue(simpleCallback())}
  }
