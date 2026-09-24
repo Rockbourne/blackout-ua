@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.22.0")
+app = FastAPI(title="Blackout UA API", version="0.23.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -142,7 +142,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.22.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.23.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -228,6 +228,35 @@ async def cherkasy_get(params: dict):
         raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo HTTP {exc.response.status_code}") from exc
     except (httpx.RequestError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo request failed: {type(exc).__name__}") from exc
+
+CHERKASY_DEPARTMENTS = [
+    {"ID":"1","NAME":"Черкаські міські енергетичні мережі"},
+    {"ID":"2","NAME":"Смілянські енергетичні мережі"},
+    {"ID":"3","NAME":"Уманські енергетичні мережі"},
+    {"ID":"4","NAME":"Городищенська філія"},
+    {"ID":"5","NAME":"Драбівська філія"},
+    {"ID":"6","NAME":"Жашківська філія"},
+    {"ID":"7","NAME":"Звенигородські енергетичні мережі"},
+    {"ID":"8","NAME":"Золотоніські енергетичні мережі"},
+    {"ID":"9","NAME":"Кам’янська філія"},
+    {"ID":"10","NAME":"Канівська філія"},
+    {"ID":"11","NAME":"Катеринопільська філія"},
+    {"ID":"12","NAME":"Корсунь-Шевченківська філія"},
+    {"ID":"13","NAME":"Лисянська філія"},
+    {"ID":"14","NAME":"Маньківська філія"},
+    {"ID":"15","NAME":"Монастирищенська філія"},
+    {"ID":"16","NAME":"Смілянське відділення"},
+    {"ID":"17","NAME":"Тальнівська філія"},
+    {"ID":"18","NAME":"Христинівська філія"},
+    {"ID":"19","NAME":"Черкаські районні енергетичні мережі"},
+    {"ID":"20","NAME":"Чигиринська філія"},
+    {"ID":"21","NAME":"Чорнобаївська філія"},
+    {"ID":"22","NAME":"Шполянська філія"},
+]
+
+@app.get("/api/v1/cherkasy/departments")
+async def cherkasy_departments():
+    return {"items": CHERKASY_DEPARTMENTS}
 
 @app.get("/api/v1/cherkasy/departments/{dept_id}/cities")
 async def cherkasy_cities(dept_id: int):
