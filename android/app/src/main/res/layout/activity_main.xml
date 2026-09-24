@@ -1,19 +1,18 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
 <LinearLayout android:orientation="vertical" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content">
-<TextView android:text="Blackout UA" android:textSize="30sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<Spinner android:id="@+id/region" android:layout_marginTop="20dp" android:layout_width="match_parent" android:layout_height="52dp"/>
-<AutoCompleteTextView android:id="@+id/street" android:completionThreshold="2" android:hint="Вулиця" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<AutoCompleteTextView android:id="@+id/house" android:completionThreshold="0" android:hint="Будинок" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Button android:id="@+id/search" android:text="Знайти графік" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Button android:id="@+id/testSchedule" android:text="ТЕСТ ГРАФІКА" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Switch android:id="@+id/showSun" android:text="Схід і захід сонця на графіку" android:checked="true" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<TextView android:id="@+id/status" android:text="Вкажіть адресу" android:textSize="26sp" android:textStyle="bold" android:layout_marginTop="28dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+<TextView android:text="Blackout UA" android:textSize="30sp" android:textStyle="bold" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"/>
+<Button android:id="@+id/settings" android:text="⚙" android:textSize="24sp" android:minWidth="52dp" android:layout_width="52dp" android:layout_height="52dp"/>
+</LinearLayout>
+<Button android:id="@+id/testSchedule" android:text="ТЕСТ ГРАФІКА" android:layout_marginTop="14dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<TextView android:id="@+id/status" android:text="Налаштуйте адресу через ⚙" android:textSize="26sp" android:textStyle="bold" android:layout_marginTop="28dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/countdown" android:text="" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="6dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/nextOutage" android:text="" android:textSize="16sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/details" android:text="" android:textSize="15sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:text="Сьогодні" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="28dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<ua.blackout.app.ScheduleTimelineView android:id="@+id/todayTimeline" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="76dp"/>
-<TextView android:id="@+id/today" android:text="" android:textSize="17sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<ua.blackout.app.ScheduleTimelineView android:id="@+id/todayTimeline" android:layout_marginTop="6dp" android:layout_width="match_parent" android:layout_height="94dp"/>
+<TextView android:id="@+id/today" android:text="" android:textSize="17sp" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:text="Завтра" android:textSize="20sp" android:textStyle="bold" android:layout_marginTop="24dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<ua.blackout.app.ScheduleTimelineView android:id="@+id/tomorrowTimeline" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="76dp"/><TextView android:id="@+id/tomorrow" android:text="" android:textSize="17sp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<ua.blackout.app.ScheduleTimelineView android:id="@+id/tomorrowTimeline" android:layout_marginTop="6dp" android:layout_width="match_parent" android:layout_height="94dp"/>
+<TextView android:id="@+id/tomorrow" android:text="" android:textSize="17sp" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 </LinearLayout></ScrollView>
