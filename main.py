@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.19.0")
+app = FastAPI(title="Blackout UA API", version="0.20.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.19.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.20.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -207,6 +207,29 @@ def street_queries(street: str) -> list[str]:
             seen.add(key)
             result.append(q)
     return result
+
+@app.get("/api/v1/address/streets")
+async def address_streets(region: str, q: str = Query(..., min_length=2)):
+    config = YASNO_REGIONS.get(region)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
+    common = {"regionId": config["region_id"], "dsoId": config["dso_id"]}
+    merged, seen = [], set()
+    for query in street_queries(q):
+        data = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": query})
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("id") not in seen:
+                    seen.add(item.get("id")); merged.append(item)
+    return {"items": merged[:20]}
+
+@app.get("/api/v1/address/houses")
+async def address_houses(region: str, street_id: int, q: str = ""):
+    config = YASNO_REGIONS.get(region)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
+    data = await yasno_get(f"{YASNO_ADDRESS}/houses", {"regionId": config["region_id"], "dsoId": config["dso_id"], "streetId": street_id, "query": q})
+    return {"items": data[:30] if isinstance(data, list) else []}
 
 async def resolve_address(region: str, street: str, house: str) -> dict:
     config = YASNO_REGIONS.get(region)
