@@ -16,7 +16,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.31.0")
+app = FastAPI(title="Blackout UA API", version="0.31.1")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
