@@ -5,18 +5,24 @@ import os
 import json
 import hashlib
 import asyncio
+import io
+import unicodedata
 import httpx
+from bs4 import BeautifulSoup
+from pypdf import PdfReader
 import asyncpg
 import firebase_admin
 from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.25.0")
+app = FastAPI(title="Blackout UA API", version="0.26.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
 CHERKASY_ROOT = "https://cabinet.cherkasyoblenergo.com/api_new/disconn.php"
+CHERKASY_GPV_PAGE = "https://www.cherkasyoblenergo.com/static/perelik-gpv"
+cherkasy_gpv_cache = {"loaded_at": None, "documents": []}
 CHERKASY_REGION = "cherkasy"
 YASNO_REGIONS = {
     "kyiv": {"region_id": 25, "dso_id": 902, "name": "Київ"},
@@ -254,6 +260,77 @@ async def cherkasy_get(params: dict):
         raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo HTTP {exc.response.status_code}") from exc
     except (httpx.RequestError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo request failed: {type(exc).__name__}") from exc
+
+
+def _gpv_norm(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value or "").lower().replace("’", "'").replace("ʼ", "'")
+    value = re.sub(r"[^0-9a-zа-яіїєґ'/-]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+async def _load_cherkasy_gpv(force: bool = False):
+    global cherkasy_gpv_cache
+    now = datetime.now(timezone.utc)
+    loaded = cherkasy_gpv_cache.get("loaded_at")
+    if not force and loaded and (now - loaded).total_seconds() < 21600 and cherkasy_gpv_cache.get("documents"):
+        return cherkasy_gpv_cache["documents"]
+    headers = {"User-Agent": "Mozilla/5.0 BlackoutUA/0.26", "Accept-Language": "uk,en;q=0.8"}
+    docs = []
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers) as client:
+        page = await client.get(CHERKASY_GPV_PAGE)
+        page.raise_for_status()
+        soup = BeautifulSoup(page.text, "html.parser")
+        links = []
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
+            label = " ".join(a.stripped_strings)
+            if ".pdf" not in href.lower():
+                continue
+            m = re.search(r"([1-6])\s*черга.*?(І{1,2}|I{1,2})\s*підчерга", label, re.I)
+            if not m:
+                continue
+            roman = m.group(2).upper().replace("I", "І")
+            group = f"{m.group(1)}.{1 if roman == 'І' else 2}"
+            from urllib.parse import urljoin
+            links.append((group, urljoin(CHERKASY_GPV_PAGE, href)))
+        unique = dict(links)
+        if len(unique) != 12:
+            raise HTTPException(status_code=502, detail=f"Official GPV page exposed {len(unique)}/12 documents")
+        for group in sorted(unique, key=lambda x: tuple(map(int, x.split(".")))):
+            url = unique[group]
+            pdf = await client.get(url)
+            pdf.raise_for_status()
+            reader = PdfReader(io.BytesIO(pdf.content))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+            docs.append({"group": group, "url": url, "normalized": _gpv_norm(text), "pages": len(reader.pages)})
+    cherkasy_gpv_cache = {"loaded_at": now, "documents": docs}
+    return docs
+
+@app.get("/api/v1/cherkasy/gpv/sources")
+async def cherkasy_gpv_sources(refresh: bool = False):
+    try:
+        docs = await _load_cherkasy_gpv(refresh)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
+    return {"source": CHERKASY_GPV_PAGE, "valid_from": "2026-04-01", "valid_to": "2026-10-01", "count": len(docs),
+            "items": [{"group": d["group"], "pages": d["pages"], "url": d["url"]} for d in docs]}
+
+@app.get("/api/v1/cherkasy/gpv/search")
+async def cherkasy_gpv_search(q: str = Query(..., min_length=3)):
+    try:
+        docs = await _load_cherkasy_gpv()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Official GPV source failed: {type(exc).__name__}") from exc
+    needle = _gpv_norm(q)
+    tokens = [t for t in needle.split() if len(t) >= 2]
+    matches = []
+    for d in docs:
+        hay = d["normalized"]
+        if needle in hay or (tokens and all(t in hay for t in tokens)):
+            pos = hay.find(needle)
+            if pos < 0:
+                pos = min((hay.find(t) for t in tokens if hay.find(t) >= 0), default=0)
+            matches.append({"group": d["group"], "context": hay[max(0,pos-160):min(len(hay),pos+len(needle)+220)], "source_url": d["url"]})
+    return {"query": q, "matches": matches, "ambiguous": len(matches) != 1}
 
 CHERKASY_DEPARTMENTS = [
     {"ID":"1","NAME":"Черкаські міські енергетичні мережі"},
