@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.20.0")
+app = FastAPI(title="Blackout UA API", version="0.21.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -96,6 +96,16 @@ async def startup():
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY(provider, region, group_name)
         )""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS outage_reminders (
+            device_id BIGINT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            region TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            outage_date TEXT NOT NULL,
+            outage_start TEXT NOT NULL,
+            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(device_id, provider, region, group_name, outage_date, outage_start)
+        )""")
     poll_task = asyncio.create_task(poll_loop())
     asyncio.create_task(push_loop())
 
@@ -125,7 +135,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.20.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.21.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -378,6 +388,18 @@ def schedule_hash(schedule: dict) -> str:
     raw = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 
+def json_object(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
 def outage_diff(previous: dict, current: dict) -> list:
     changes = []
     for key in ("today", "tomorrow"):
@@ -408,7 +430,7 @@ async def save_snapshot(schedule: dict) -> dict:
             "INSERT INTO schedule_snapshots(provider,region,group_name,provider_updated_at,content_hash,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING id",
             schedule["provider"], schedule["region"], schedule["group"], schedule.get("provider_updated_at"), digest, json.dumps(schedule, ensure_ascii=False)
         )
-        changes = outage_diff(previous["payload"], schedule) if previous else []
+        changes = outage_diff(json_object(previous["payload"]), schedule) if previous else []
         for change in changes:
             await conn.execute(
                 "INSERT INTO change_events(provider,region,group_name,snapshot_id,event_type,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
@@ -503,7 +525,7 @@ async def deliver_pending_events() -> dict:
                 AND d.enabled=TRUE AND d.fcm_token IS NOT NULL""",
                 event["provider"], event["region"], event["group_name"]
             )
-        title, body = notification_text(event["event_type"], event["payload"])
+        title, body = notification_text(event["event_type"], json_object(event["payload"]))
         all_ok = True
         for row in tokens:
             try:
@@ -520,10 +542,100 @@ async def deliver_pending_events() -> dict:
                 await conn.execute("UPDATE change_events SET delivered=TRUE WHERE id=$1", event["id"])
     return {"sent": sent, "firebase": "ready"}
 
+async def deliver_outage_reminders() -> dict:
+    if not db_pool or not firebase_app:
+        return {"sent": 0, "firebase": "disabled" if not firebase_app else "ready"}
+    now = datetime.now(ZoneInfo("Europe/Kyiv"))
+    async with db_pool.acquire() as conn:
+        subscriptions = await conn.fetch(
+            """SELECT d.id AS device_id,d.fcm_token,s.provider,s.region,s.group_name,s.notify_before_minutes
+            FROM device_subscriptions s
+            JOIN devices d ON d.id=s.device_id
+            WHERE d.enabled=TRUE AND d.fcm_token IS NOT NULL AND s.notify_before_minutes>0"""
+        )
+    sent = 0
+    cache = {}
+    for sub in subscriptions:
+        key = (sub["provider"], sub["region"], sub["group_name"])
+        if sub["provider"] != "yasno":
+            continue
+        if key not in cache:
+            async with db_pool.acquire() as conn:
+                payload = await conn.fetchval(
+                    """SELECT payload FROM schedule_snapshots
+                    WHERE provider=$1 AND region=$2 AND group_name=$3
+                    ORDER BY fetched_at DESC LIMIT 1""",
+                    *key
+                )
+            cache[key] = json_object(payload)
+        schedule = cache[key]
+        if not schedule:
+            continue
+        for day_name in ("today", "tomorrow"):
+            day = schedule.get(day_name) or {}
+            outage_date = day.get("date")
+            if not outage_date:
+                continue
+            for outage in day.get("outages") or []:
+                outage_start = outage.get("start")
+                outage_end = outage.get("end")
+                if not outage_start or not outage_end or outage_start == "24:00":
+                    continue
+                try:
+                    start_at = datetime.fromisoformat(f"{outage_date}T{outage_start}:00").replace(tzinfo=ZoneInfo("Europe/Kyiv"))
+                except ValueError:
+                    continue
+                delta_minutes = (start_at - now).total_seconds() / 60
+                before = int(sub["notify_before_minutes"])
+                if delta_minutes < 0 or delta_minutes > before:
+                    continue
+                async with db_pool.acquire() as conn:
+                    claimed = await conn.fetchval(
+                        """INSERT INTO outage_reminders(device_id,provider,region,group_name,outage_date,outage_start)
+                        VALUES($1,$2,$3,$4,$5,$6)
+                        ON CONFLICT DO NOTHING
+                        RETURNING 1""",
+                        sub["device_id"], sub["provider"], sub["region"], sub["group_name"], outage_date, outage_start
+                    )
+                if not claimed:
+                    continue
+                minutes = max(1, int(delta_minutes))
+                try:
+                    await asyncio.to_thread(
+                        messaging.send,
+                        messaging.Message(
+                            token=sub["fcm_token"],
+                            notification=messaging.Notification(
+                                title="Скоро відключення",
+                                body=f"Приблизно через {minutes} хв · {outage_start}–{outage_end}"
+                            ),
+                            data={
+                                "type": "OUTAGE_REMINDER",
+                                "region": sub["region"],
+                                "group": sub["group_name"],
+                                "date": outage_date,
+                                "start": outage_start,
+                                "end": outage_end,
+                            }
+                        ),
+                        app=firebase_app
+                    )
+                    sent += 1
+                except Exception:
+                    async with db_pool.acquire() as conn:
+                        await conn.execute(
+                            """DELETE FROM outage_reminders
+                            WHERE device_id=$1 AND provider=$2 AND region=$3 AND group_name=$4
+                            AND outage_date=$5 AND outage_start=$6""",
+                            sub["device_id"], sub["provider"], sub["region"], sub["group_name"], outage_date, outage_start
+                        )
+    return {"sent": sent, "firebase": "ready"}
+
 async def push_loop():
     while True:
         try:
             await deliver_pending_events()
+            await deliver_outage_reminders()
         except Exception:
             pass
         await asyncio.sleep(30)
@@ -615,7 +727,7 @@ async def history(region: str, group: str, limit: int = Query(20, ge=1, le=100))
             region, group, limit
         )
     return {"region": region, "group": group, "snapshots": [
-        {"id": r["id"], "provider": r["provider"], "provider_updated_at": r["provider_updated_at"], "fetched_at": r["fetched_at"].isoformat(), "schedule": r["payload"]}
+        {"id": r["id"], "provider": r["provider"], "provider_updated_at": r["provider_updated_at"], "fetched_at": r["fetched_at"].isoformat(), "schedule": json_object(r["payload"])}
         for r in rows
     ]}
 
@@ -639,7 +751,7 @@ async def change_events(region: str, group: str, limit: int = Query(50, ge=1, le
             region, group, limit
         )
     return {"region": region, "group": group, "events": [
-        {"id": r["id"], "snapshot_id": r["snapshot_id"], "type": r["event_type"], "payload": r["payload"], "created_at": r["created_at"].isoformat(), "delivered": r["delivered"]}
+        {"id": r["id"], "snapshot_id": r["snapshot_id"], "type": r["event_type"], "payload": json_object(r["payload"]), "created_at": r["created_at"].isoformat(), "delivered": r["delivered"]}
         for r in rows
     ]}
 
