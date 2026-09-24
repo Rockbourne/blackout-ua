@@ -17,9 +17,12 @@ app = FastAPI(title="Blackout UA API", version="0.21.0")
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
 YASNO_REGIONS = {
-    "kyiv": {"region_id": 25, "dso_id": 902},
-    "dnipro-dtek": {"region_id": 3, "dso_id": 301},
-    "dnipro-cek": {"region_id": 3, "dso_id": 303},
+    "kyiv": {"region_id": 25, "dso_id": 902, "name": "Київ"},
+    "dnipro-dtek": {"region_id": 3, "dso_id": 301, "name": "Дніпро · ДТЕК"},
+    "dnipro-cek": {"region_id": 3, "dso_id": 303, "name": "Дніпро · ЦЕК"},
+}
+PROVIDERS = {
+    "yasno": {"name": "YASNO", "regions": list(YASNO_REGIONS.keys())},
 }
 STATUS_MAP = {
     "NoOutages": "ON",
@@ -140,6 +143,20 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok", "database": "connected" if db_pool else "disabled", "time": datetime.now(timezone.utc).isoformat()}
+
+@app.get("/api/v1/providers")
+async def providers():
+    return {"providers": [
+        {
+            "id": provider_id,
+            "name": config["name"],
+            "regions": [
+                {"id": region_id, "name": YASNO_REGIONS[region_id]["name"]}
+                for region_id in config["regions"]
+            ],
+        }
+        for provider_id, config in PROVIDERS.items()
+    ]}
 
 @app.get("/api/v1/regions")
 async def regions():
