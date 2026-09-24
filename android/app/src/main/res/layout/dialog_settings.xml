@@ -1,7 +1,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:orientation="vertical" android:padding="20dp" android:layout_width="match_parent" android:layout_height="wrap_content">
 <TextView android:text="Оператор / джерело графіка" android:textStyle="bold" android:textSize="20sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
 <Spinner android:id="@+id/provider" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="52dp"/>
-<TextView android:text="Місто / мережа" android:textStyle="bold" android:textSize="20sp" android:layout_marginTop="16dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+<TextView android:text="Район / мережа" android:textStyle="bold" android:textSize="20sp" android:layout_marginTop="16dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
 <Spinner android:id="@+id/region" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="52dp"/>
 <Spinner android:id="@+id/city" android:visibility="gone" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="52dp"/>
 <AutoCompleteTextView android:id="@+id/street" android:completionThreshold="2" android:hint="Вулиця" android:layout_width="match_parent" android:layout_height="wrap_content"/>
