@@ -6,6 +6,9 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.*
+import android.app.AlertDialog
+import android.view.LayoutInflater
+import java.time.LocalDate
 import java.time.Duration
 import java.time.ZonedDateTime
 import androidx.appcompat.app.AppCompatActivity
@@ -23,77 +26,31 @@ class MainActivity:AppCompatActivity(){
  override fun onCreate(savedInstanceState:Bundle?){
   super.onCreate(savedInstanceState);setContentView(R.layout.activity_main)
   if(Build.VERSION.SDK_INT>=33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),10)
-  val spinner=findViewById<Spinner>(R.id.region)
-  val streetView=findViewById<AutoCompleteTextView>(R.id.street)
-  val houseView=findViewById<AutoCompleteTextView>(R.id.house)
-  spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Київ","Дніпро · ДТЕК","Дніпро · ЦЕК"))
   val prefs=getSharedPreferences("blackout",MODE_PRIVATE)
-  val sunSwitch=findViewById<Switch>(R.id.showSun)
-
-  spinner.setSelection(prefs.getInt("region_index",0))
-  sunSwitch.isChecked=prefs.getBoolean("show_sun",true)
-  fun applySun(){val on=sunSwitch.isChecked;findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSun(on,"06:45","18:52");findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSun(on,"06:47","18:50")}
+  fun applySun(){
+   val region=regions[prefs.getInt("region_index",0).coerceIn(0,regions.lastIndex)]
+   val on=prefs.getBoolean("show_sun",true)
+   val today=SunTimes.forRegion(region,LocalDate.now());val tomorrow=SunTimes.forRegion(region,LocalDate.now().plusDays(1))
+   findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSun(on,today?.first,today?.second)
+   findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSun(on,tomorrow?.first,tomorrow?.second)
+  }
   applySun()
-  sunSwitch.setOnCheckedChangeListener{_,on->prefs.edit().putBoolean("show_sun",on).apply();applySun()}
-  streetView.setText(prefs.getString("street",""),false)
-  houseView.setText(prefs.getString("house",""),false)
-  streetView.addTextChangedListener(object:TextWatcher{
-   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
-   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){}
-   override fun afterTextChanged(s:Editable?){
-    selectedStreetId=null
-    val q=s?.toString()?.trim().orEmpty()
-    if(q.length<2)return
-    streetRequest?.cancel()
-    streetRequest=api.streets(regions[spinner.selectedItemPosition],q)
-    streetRequest?.enqueue(object:Callback<AddressItems>{
-     override fun onResponse(call:Call<AddressItems>,response:Response<AddressItems>){
-      if(call.isCanceled)return
-      val items=response.body()?.items.orEmpty()
-      val labels=items.mapNotNull{it.value}
-      streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,labels))
-      streetView.setOnItemClickListener{_,_,position,_-> 
-       val chosen=items.getOrNull(position)?:return@setOnItemClickListener
-       selectedStreetId=chosen.id
-       streetView.setText(chosen.value.orEmpty(),false)
-       houseView.setText("",false)
-       chosen.id?.let{loadHouses(regions[spinner.selectedItemPosition],it,houseView)}
-      }
-      if(labels.isNotEmpty()&&streetView.hasFocus())streetView.showDropDown()
-     }
-     override fun onFailure(call:Call<AddressItems>,t:Throwable){}
-    })
-   }
-  })
-  houseView.setOnClickListener{selectedStreetId?.let{loadHouses(regions[spinner.selectedItemPosition],it,houseView)}}
+  findViewById<Button>(R.id.settings).setOnClickListener{
+   val v=LayoutInflater.from(this).inflate(R.layout.dialog_settings,null)
+   val spinner=v.findViewById<Spinner>(R.id.region);val streetView=v.findViewById<AutoCompleteTextView>(R.id.street);val houseView=v.findViewById<AutoCompleteTextView>(R.id.house);val sun=v.findViewById<Switch>(R.id.showSun)
+   spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Київ","Дніпро · ДТЕК","Дніпро · ЦЕК"));spinner.setSelection(prefs.getInt("region_index",0))
+   streetView.setText(prefs.getString("street",""),false);houseView.setText(prefs.getString("house",""),false);sun.isChecked=prefs.getBoolean("show_sun",true)
+   streetView.addTextChangedListener(object:TextWatcher{override fun beforeTextChanged(s:CharSequence?,st:Int,c:Int,a:Int){};override fun onTextChanged(s:CharSequence?,st:Int,b:Int,c:Int){};override fun afterTextChanged(s:Editable?){val q=s?.toString()?.trim().orEmpty();if(q.length<2)return;api.streets(regions[spinner.selectedItemPosition],q).enqueue(object:Callback<AddressItems>{override fun onResponse(call:Call<AddressItems>,r:Response<AddressItems>){val items=r.body()?.items.orEmpty();streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,items.mapNotNull{it.value}));streetView.setOnItemClickListener{_,_,pos,_->items.getOrNull(pos)?.id?.let{loadHouses(regions[spinner.selectedItemPosition],it,houseView)}};streetView.showDropDown()};override fun onFailure(call:Call<AddressItems>,t:Throwable){}})}})
+   AlertDialog.Builder(this).setTitle("Налаштування").setView(v).setNegativeButton("Скасувати",null).setPositiveButton("Зберегти"){_,_->val ri=spinner.selectedItemPosition;val street=streetView.text.toString().trim();val house=houseView.text.toString().trim();prefs.edit().putInt("region_index",ri).putString("street",street).putString("house",house).putBoolean("show_sun",sun.isChecked).apply();applySun();if(street.length>=2&&house.isNotEmpty())loadAddress(regions[ri],street,house)}.show()
+  }
   findViewById<Button>(R.id.testSchedule).setOnClickListener{
-   val now=ZonedDateTime.now()
-   fun hm(minutes:Int):String{val m=((now.hour*60+now.minute+minutes)%1440+1440)%1440;return "%02d:%02d".format(m/60,m%60)}
-   val date=now.toLocalDate().toString()
-   val today=DaySchedule(date,"SCHEDULED",listOf(Outage(date,hm(30),hm(150)),Outage(date,hm(300),hm(420))),listOf(
-    Slot("00:00",hm(30),"ON","NotPlanned"),Slot(hm(30),hm(150),"OFF","Definite"),Slot(hm(150),hm(300),"ON","NotPlanned"),Slot(hm(300),hm(420),"OFF","Definite"),Slot(hm(420),"24:00","ON","NotPlanned")
-   ))
-   val tomorrowDate=now.plusDays(1).toLocalDate().toString()
-   val tomorrow=DaySchedule(tomorrowDate,"SCHEDULED",listOf(Outage(tomorrowDate,"08:00","11:00"),Outage(tomorrowDate,"18:00","21:00")),listOf(
-    Slot("00:00","08:00","ON","NotPlanned"),Slot("08:00","11:00","OFF","Definite"),Slot("11:00","18:00","ON","NotPlanned"),Slot("18:00","21:00","OFF","Definite"),Slot("21:00","24:00","ON","NotPlanned")
-   ))
-   val current=CurrentState("ON",null,now.toString(),Outage(date,hm(30),hm(150)))
-   findViewById<TextView>(R.id.status).text="ТЕСТ · Світло має бути"
-   findViewById<TextView>(R.id.details).text="Тестові дані · група TEST"
-   renderNext(current)
-   findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(today,true)
-   findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(tomorrow,false)
-   findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",today)
-   findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",tomorrow)
+   val now=ZonedDateTime.now();fun hm(minutes:Int):String{val m=((now.hour*60+now.minute+minutes)%1440+1440)%1440;return "%02d:%02d".format(m/60,m%60)}
+   val date=now.toLocalDate().toString();val today=DaySchedule(date,"SCHEDULED",listOf(Outage(date,hm(30),hm(150)),Outage(date,hm(300),hm(420))),listOf(Slot("00:00",hm(30),"ON","NotPlanned"),Slot(hm(30),hm(150),"OFF","Definite"),Slot(hm(150),hm(300),"ON","NotPlanned"),Slot(hm(300),hm(420),"OFF","Definite"),Slot(hm(420),"24:00","ON","NotPlanned")))
+   val td=now.plusDays(1).toLocalDate().toString();val tomorrow=DaySchedule(td,"SCHEDULED",listOf(Outage(td,"08:00","11:00"),Outage(td,"18:00","21:00")),listOf(Slot("00:00","08:00","ON","NotPlanned"),Slot("08:00","11:00","OFF","Definite"),Slot("11:00","18:00","ON","NotPlanned"),Slot("18:00","21:00","OFF","Definite"),Slot("21:00","24:00","ON","NotPlanned")))
+   findViewById<TextView>(R.id.status).text="ТЕСТ · Світло має бути";findViewById<TextView>(R.id.details).text="Тестові дані · група TEST";renderNext(CurrentState("ON",null,now.toString(),Outage(date,hm(30),hm(150))));findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(today,true);findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(tomorrow,false);findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",today);findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",tomorrow)
   }
   FirebaseMessaging.getInstance().token.addOnSuccessListener{token->fcmToken=token;api.register(DeviceRegister(installId,token)).enqueue(simpleCallback())}
-  findViewById<Button>(R.id.search).setOnClickListener{
-   val street=streetView.text.toString().trim()
-   val house=houseView.text.toString().trim()
-   if(street.length<2||house.isEmpty()){Toast.makeText(this,"Вкажіть вулицю та будинок",Toast.LENGTH_SHORT).show();return@setOnClickListener}
-   prefs.edit().putString("street",street).putString("house",house).putInt("region_index",spinner.selectedItemPosition).apply()
-   loadAddress(regions[spinner.selectedItemPosition],street,house)
-  }
+
  }
  private fun loadHouses(region:String,streetId:Int,view:AutoCompleteTextView){
   api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{
