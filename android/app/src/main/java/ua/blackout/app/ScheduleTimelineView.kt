@@ -1,25 +1,30 @@
 package ua.blackout.app
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
+import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
 import java.time.ZonedDateTime
 
 class ScheduleTimelineView @JvmOverloads constructor(context:Context,attrs:AttributeSet?=null):View(context,attrs){
- private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
- private var slots:List<Slot> = emptyList()
- private var showNow=false
+ private val p=Paint(Paint.ANTI_ALIAS_FLAG); private var slots:List<Slot> = emptyList(); private var showNow=false
+ private var showSun=false; private var sunrise:Int?=null; private var sunset:Int?=null
  fun setSchedule(day:DaySchedule,isToday:Boolean){slots=day.slots;showNow=isToday;invalidate()}
- private fun minute(v:String):Int{val p=v.split(":");return (p.getOrNull(0)?.toIntOrNull()?:0)*60+(p.getOrNull(1)?.toIntOrNull()?:0)}
+ fun setSun(show:Boolean,rise:String?=null,set:String?=null){showSun=show;sunrise=rise?.let(::minute);sunset=set?.let(::minute);invalidate()}
+ private fun minute(v:String):Int{val x=v.split(":");return (x.getOrNull(0)?.toIntOrNull()?:0)*60+(x.getOrNull(1)?.toIntOrNull()?:0)}
+ private fun x(m:Int,w:Float)=w*m/1440f
  override fun onDraw(c:Canvas){
-  super.onDraw(c)
-  val h=height.toFloat(); val w=width.toFloat()
-  paint.color=0xff9e9e9e.toInt();c.drawRect(0f,0f,w,h,paint)
-  for(s in slots){
-   paint.color=when(s.status){"OFF"->0xffd32f2f.toInt();"ON"->0xff43a047.toInt();else->0xfff9a825.toInt()}
-   val l=w*minute(s.start)/1440f;val r=w*minute(s.end)/1440f;c.drawRect(l,0f,r,h,paint)
+  super.onDraw(c);val w=width.toFloat();val top=42f;val bottom=height-18f;val radius=14f
+  p.color=0xff8b8b8b.toInt();c.drawRoundRect(0f,top,w,bottom,radius,radius,p)
+  c.save();val clip=Path().apply{addRoundRect(0f,top,w,bottom,radius,radius,Path.Direction.CW)};c.clipPath(clip)
+  for(s in slots){p.color=when(s.status){"OFF"->0xffd94b45.toInt();"ON"->0xff3fae68.toInt();else->0xffd6a52d.toInt()};c.drawRect(x(minute(s.start),w),top,x(minute(s.end),w),bottom,p)}
+  c.restore()
+  p.textSize=24f;p.textAlign=Paint.Align.CENTER;p.typeface=Typeface.create(Typeface.DEFAULT,Typeface.BOLD)
+  val boundaries=(slots.flatMap{listOf(it.start,it.end)}).distinct().filter{it!="24:00"}
+  for(t in boundaries){val m=minute(t);val xx=x(m,w);p.color=0xff666666.toInt();c.drawText(t,xx.coerceIn(32f,w-32f),30f,p);p.strokeWidth=2f;c.drawLine(xx,top-6,xx,top+6,p)}
+  if(showSun){
+   fun sun(m:Int?,icon:String){if(m==null)return;val xx=x(m,w);p.textSize=25f;p.color=0xffffa000.toInt();c.drawText(icon,xx.coerceIn(18f,w-18f),height.toFloat(),p)}
+   sun(sunrise,"☀");sun(sunset,"☾")
   }
-  if(showNow){val n=ZonedDateTime.now();val x=w*(n.hour*60+n.minute)/1440f;paint.color=0xffffffff.toInt();paint.strokeWidth=4f;c.drawLine(x,0f,x,h,paint)}
+  if(showNow){val n=ZonedDateTime.now();val m=n.hour*60+n.minute;val xx=x(m,w);p.color=0xff202020.toInt();p.strokeWidth=4f;c.drawLine(xx,top-10,xx,bottom+5,p);p.textSize=25f;c.drawText("%02d:%02d".format(n.hour,n.minute),xx.coerceIn(34f,w-34f),top-12,p)}
  }
 }
