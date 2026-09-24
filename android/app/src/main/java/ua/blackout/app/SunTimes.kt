@@ -2,7 +2,7 @@ package ua.blackout.app
 import java.time.*
 
 object SunTimes{
- private val coords=mapOf("kyiv" to Pair(50.4501,30.5234),"dnipro-dtek" to Pair(48.4647,35.0462),"dnipro-cek" to Pair(48.4647,35.0462))
+ private val coords=mapOf("kyiv" to Pair(50.4501,30.5234),"dnipro-dtek" to Pair(48.4647,35.0462),"dnipro-cek" to Pair(48.4647,35.0462),"cherkasy" to Pair(49.4444,32.0598))
  fun forRegion(region:String,date:LocalDate):Pair<String,String>?{
   val c=coords[region]?:return null
   return Pair(calc(date,c.first,c.second,true),calc(date,c.first,c.second,false))
