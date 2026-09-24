@@ -1,0 +1,5 @@
+<resources>
+<style name="Theme.BlackoutUA" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+</style>
+</resources>
