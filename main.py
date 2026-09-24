@@ -12,10 +12,12 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.21.0")
+app = FastAPI(title="Blackout UA API", version="0.22.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
+CHERKASY_ROOT = "https://cabinet.cherkasyoblenergo.com/api_new/disconn.php"
+CHERKASY_REGION = "cherkasy"
 YASNO_REGIONS = {
     "kyiv": {"region_id": 25, "dso_id": 902, "name": "Київ"},
     "dnipro-dtek": {"region_id": 3, "dso_id": 301, "name": "Дніпро · ДТЕК"},
@@ -23,7 +25,9 @@ YASNO_REGIONS = {
 }
 PROVIDERS = {
     "yasno": {"name": "YASNO", "regions": list(YASNO_REGIONS.keys())},
+    "cherkasyoblenergo": {"name": "Черкасиобленерго", "regions": [CHERKASY_REGION]},
 }
+REGION_NAMES = {**{k: v["name"] for k, v in YASNO_REGIONS.items()}, CHERKASY_REGION: "Черкаська область"}
 STATUS_MAP = {
     "NoOutages": "ON",
     "WaitingForSchedule": "UNKNOWN",
@@ -138,7 +142,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.21.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.22.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -151,7 +155,7 @@ async def providers():
             "id": provider_id,
             "name": config["name"],
             "regions": [
-                {"id": region_id, "name": YASNO_REGIONS[region_id]["name"]}
+                {"id": region_id, "name": REGION_NAMES.get(region_id, region_id)}
                 for region_id in config["regions"]
             ],
         }
@@ -160,7 +164,7 @@ async def providers():
 
 @app.get("/api/v1/regions")
 async def regions():
-    return {"regions": [{"id": k, "provider": "yasno", **v} for k, v in YASNO_REGIONS.items()]}
+    return {"regions": ([{"id": k, "provider": "yasno", **v} for k, v in YASNO_REGIONS.items()] + [{"id": CHERKASY_REGION, "provider": "cherkasyoblenergo", "name": REGION_NAMES[CHERKASY_REGION]}])}
 
 def minute_to_time(value: int) -> str:
     value = max(0, min(int(value), 1440))
@@ -213,6 +217,60 @@ async def yasno_get(path: str, params: dict | None = None):
         raise HTTPException(status_code=502, detail=f"Provider HTTP {exc.response.status_code}") from exc
     except (httpx.RequestError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"Provider request failed: {type(exc).__name__}") from exc
+
+async def cherkasy_get(params: dict):
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(CHERKASY_ROOT, params=params, headers={"Accept": "*/*", "Referer": "https://www.cherkasyoblenergo.com/"})
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo HTTP {exc.response.status_code}") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Cherkasyoblenergo request failed: {type(exc).__name__}") from exc
+
+@app.get("/api/v1/cherkasy/departments/{dept_id}/cities")
+async def cherkasy_cities(dept_id: int):
+    data = await cherkasy_get({"op": "city_list", "dept_id": dept_id})
+    return {"items": data if isinstance(data, list) else []}
+
+@app.get("/api/v1/cherkasy/cities/{city_id}/streets")
+async def cherkasy_streets(city_id: int, q: str = ""):
+    data = await cherkasy_get({"op": "street_list", "city_id": city_id, "search_name": q})
+    return {"items": data if isinstance(data, list) else []}
+
+@app.get("/api/v1/cherkasy/streets/{street_id}/houses")
+async def cherkasy_houses(street_id: int, q: str = ""):
+    data = await cherkasy_get({"op": "house_list", "street_id": street_id, "search_name": q})
+    return {"items": data if isinstance(data, list) else []}
+
+@app.get("/api/v1/cherkasy/address/accounts")
+async def cherkasy_accounts(street_id: int, house: str = Query(..., min_length=1)):
+    data = await cherkasy_get({"op": "ls_list_by_addr", "street_id": street_id, "house": house})
+    # LS is provider-side routing data. The app should not persist it as user profile data.
+    return {"items": data if isinstance(data, list) else []}
+
+@app.get("/api/v1/cherkasy/disconnections")
+async def cherkasy_disconnections(
+    abon_ls: str = Query(..., min_length=1),
+    start_date: str = Query(..., description="DD.MM.YYYY"),
+    end_date: str = Query(..., description="DD.MM.YYYY"),
+    selector: int = 0,
+):
+    data = await cherkasy_get({
+        "op": "disconn_by_ls", "disconn_selector": selector,
+        "n_date": start_date, "k_date": end_date, "abon_ls": abon_ls,
+    })
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Unexpected Cherkasyoblenergo response")
+    raw = data.get("DISCONNECTIONS")
+    return {
+        "provider": "cherkasyoblenergo", "region": CHERKASY_REGION,
+        "provider_updated_at": data.get("DATETIME"),
+        "disconnections": raw if isinstance(raw, list) else [],
+        "normalized": False,
+        "note": "Empty DISCONNECTIONS means the provider returned no records for the requested period; it is not treated as guaranteed ON.",
+    }
 
 def street_queries(street: str) -> list[str]:
     original = " ".join(street.strip().split())
