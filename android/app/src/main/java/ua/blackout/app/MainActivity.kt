@@ -50,7 +50,7 @@ class MainActivity:AppCompatActivity(){
    notifySpinner.setSelection(notifyValues.indexOf(prefs.getInt("notify_before_minutes",30)).let{if(it>=0)it else 3})
    streetView.setText(prefs.getString("street",""),false);houseView.setText(prefs.getString("house",""),false);sun.isChecked=prefs.getBoolean("show_sun",true)
 
-   var cities:List<CherkasyItem> = emptyList()
+   var departments:List<CherkasyItem> = emptyList()\n   var cities:List<CherkasyItem> = emptyList()
    var streets:List<CherkasyItem> = emptyList()
    var selectedStreetId:Int?=prefs.getInt("cherkasy_street_id",-1).takeIf{it>=0}
 
@@ -59,25 +59,48 @@ class MainActivity:AppCompatActivity(){
     regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,yasnoRegionLabels)
     regionSpinner.setSelection(prefs.getInt("region_index",0).coerceIn(0,yasnoRegions.lastIndex))
    }
+   fun loadCherkasyCities(deptId:Int){
+    cities=emptyList();streets=emptyList();selectedStreetId=null
+    citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження…"))
+    api.cherkasyCities(deptId).enqueue(object:Callback<CherkasyItems>{
+     override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+      cities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
+      citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!})
+      if(cities.isNotEmpty())citySpinner.setSelection(0)
+      else Toast.makeText(this@MainActivity,"Для цієї філії населені пункти не отримані",Toast.LENGTH_LONG).show()
+     }
+     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Помилка завантаження населених пунктів",Toast.LENGTH_LONG).show()}
+    })
+   }
    fun setupCherkasy(){
     regionSpinner.visibility=View.VISIBLE;citySpinner.visibility=View.VISIBLE
-    regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Черкаський район"))
-    regionSpinner.setSelection(0)
-    // ID 1 / м. Черкаси is confirmed by the provider API. Keep it usable even if the city-list request fails.
-    cities=listOf(CherkasyItem("1","м. Черкаси",null))
-    citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME?:"—"})
-    citySpinner.setSelection(0)
-    api.cherkasyCities(1).enqueue(object:Callback<CherkasyItems>{
+    regionSpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Завантаження філій…"))
+    citySpinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,emptyList<String>())
+    api.cherkasyDepartments().enqueue(object:Callback<CherkasyItems>{
      override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
-      val loaded=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
-      if(loaded.isNotEmpty()){
-       cities=loaded
-       citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!})
-       citySpinner.setSelection(prefs.getInt("cherkasy_city_index",0).coerceIn(0,cities.lastIndex))
+      departments=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
+      regionSpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,departments.map{it.NAME!!})
+      if(departments.isNotEmpty()){
+       val saved=prefs.getInt("cherkasy_department_index",0).coerceIn(0,departments.lastIndex)
+       regionSpinner.setSelection(saved)
       }
      }
-     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){}
+     override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Не вдалося завантажити список філій",Toast.LENGTH_LONG).show()}
     })
+    regionSpinner.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
+     override fun onNothingSelected(p:AdapterView<*>?){}
+     override fun onItemSelected(p:AdapterView<*>?,view:View?,pos:Int,id:Long){
+      val deptId=departments.getOrNull(pos)?.ID?.toIntOrNull()?:return
+      streetView.setText("",false);houseView.setText("",false)
+      loadCherkasyCities(deptId)
+     }
+    }
+    citySpinner.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
+     override fun onNothingSelected(p:AdapterView<*>?){}
+     override fun onItemSelected(p:AdapterView<*>?,view:View?,pos:Int,id:Long){
+      streets=emptyList();selectedStreetId=null;streetView.setText("",false);houseView.setText("",false)
+     }
+    }
    }
    providerSpinner.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
     override fun onNothingSelected(p:AdapterView<*>?){}
@@ -107,7 +130,7 @@ class MainActivity:AppCompatActivity(){
    AlertDialog.Builder(this).setTitle("Налаштування").setView(v).setNegativeButton("Скасувати",null).setPositiveButton("Зберегти"){_,_->
     val pi=providerSpinner.selectedItemPosition;val provider=providers[pi];val street=streetView.text.toString().trim();val house=houseView.text.toString().trim()
     val edit=prefs.edit().putInt("provider_index",pi).putString("street",street).putString("house",house).putBoolean("show_sun",sun.isChecked).putInt("notify_before_minutes",notifyValues[notifySpinner.selectedItemPosition])
-    if(provider=="cherkasyoblenergo"){edit.putInt("cherkasy_city_index",citySpinner.selectedItemPosition);selectedStreetId?.let{edit.putInt("cherkasy_street_id",it)}} else edit.putInt("region_index",regionSpinner.selectedItemPosition)
+    if(provider=="cherkasyoblenergo"){edit.putInt("cherkasy_department_index",regionSpinner.selectedItemPosition).putInt("cherkasy_city_index",citySpinner.selectedItemPosition);selectedStreetId?.let{edit.putInt("cherkasy_street_id",it)}} else edit.putInt("region_index",regionSpinner.selectedItemPosition)
     edit.apply();applySun()
     if(street.length>=2&&house.isNotEmpty()){if(provider=="cherkasyoblenergo"){selectedStreetId?.let{loadCherkasyAddress(it,street,house)}}else loadYasnoAddress(yasnoRegions[regionSpinner.selectedItemPosition],street,house)}
    }.show()
