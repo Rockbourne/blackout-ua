@@ -5,6 +5,7 @@
 <AutoCompleteTextView android:id="@+id/street" android:completionThreshold="2" android:hint="Вулиця" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <AutoCompleteTextView android:id="@+id/house" android:completionThreshold="0" android:hint="Будинок" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/search" android:text="Знайти графік" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/testSchedule" android:text="ТЕСТ ГРАФІКА" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/status" android:text="Вкажіть адресу" android:textSize="26sp" android:textStyle="bold" android:layout_marginTop="28dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/countdown" android:text="" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="6dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/nextOutage" android:text="" android:textSize="16sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
