@@ -33,3 +33,11 @@ interface Api {
  @GET("api/v1/cherkasy/address/accounts") fun cherkasyAccounts(@Query("street_id") streetId:Int,@Query("house") house:String):Call<CherkasyAccounts>
  @GET("api/v1/cherkasy/disconnections") fun cherkasyDisconnections(@Query("abon_ls") ls:String,@Query("start_date") start:String,@Query("end_date") end:String):Call<CherkasyDisconnections>
 }
+
+
+interface CherkasyDirectApi {
+ @GET("api_new/disconn.php") fun cities(@Query("op") op:String="city_list",@Query("dept_id") deptId:Int):Call<List<CherkasyItem>>
+ @GET("api_new/disconn.php") fun streets(@Query("op") op:String="street_list",@Query("city_id") cityId:Int,@Query("search_name") q:String=""):Call<List<CherkasyItem>>
+ @GET("api_new/disconn.php") fun houses(@Query("op") op:String="house_list",@Query("street_id") streetId:Int,@Query("search_name") q:String=""):Call<List<CherkasyItem>>
+ @GET("api_new/disconn.php") fun accounts(@Query("op") op:String="ls_list_by_addr",@Query("street_id") streetId:Int,@Query("house") house:String):Call<List<CherkasyAccount>>
+}
