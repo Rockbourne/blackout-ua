@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.18.0")
+app = FastAPI(title="Blackout UA API", version="0.19.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.18.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.19.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -272,14 +272,34 @@ async def resolve_address(region: str, street: str, house: str) -> dict:
     if street_id is None:
         raise HTTPException(status_code=502, detail="Provider returned street without id")
 
-    houses = await yasno_get(
-        f"{YASNO_ADDRESS}/houses",
-        {**common, "streetId": street_id, "query": house},
-    )
-    if not isinstance(houses, list) or not houses:
-        raise HTTPException(status_code=404, detail="House not found")
+    def house_variants(value: str) -> list[str]:
+        value = value.strip()
+        variants = [value]
+        swaps = [
+            ("3", "З"), ("з", "3"), ("З", "3"),
+            ("0", "О"), ("о", "0"), ("О", "0"),
+            ("1", "І"), ("і", "1"), ("І", "1"),
+        ]
+        for src, dst in swaps:
+            if src in value:
+                variants.append(value.replace(src, dst))
+        return list(dict.fromkeys(variants))
 
-    wanted = house.strip().casefold()
+    houses = []
+    matched_house_query = None
+    for house_query in house_variants(house):
+        data = await yasno_get(
+            f"{YASNO_ADDRESS}/houses",
+            {**common, "streetId": street_id, "query": house_query},
+        )
+        if isinstance(data, list) and data:
+            houses = data
+            matched_house_query = house_query
+            break
+    if not houses:
+        raise HTTPException(status_code=404, detail={"message": "House not found", "tried": house_variants(house)})
+
+    wanted = (matched_house_query or house).strip().casefold()
     exact = next(
         (x for x in houses if str(x.get("value", x.get("name", x.get("number", "")))).strip().casefold() == wanted),
         houses[0],
