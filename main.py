@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
+import re
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.3.0")
+app = FastAPI(title="Blackout UA API", version="0.4.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -11,11 +12,16 @@ YASNO_REGIONS = {
     "dnipro-dtek": {"region_id": 3, "dso_id": 301},
     "dnipro-cek": {"region_id": 3, "dso_id": 303},
 }
-STATUS_MAP = {"NoOutages": "ON", "WaitingForSchedule": "UNKNOWN"}
+STATUS_MAP = {
+    "NoOutages": "ON",
+    "WaitingForSchedule": "UNKNOWN",
+    "ScheduleApplies": "SCHEDULED",
+}
+STREET_STOPWORDS = {"вул", "вулиця", "просп", "проспект", "пров", "провулок", "бул", "бульвар", "пл", "площа"}
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.3.0", "docs": "/docs"}
+    return {"name": "Blackout UA API", "version": "0.4.0", "docs": "/docs"}
 
 @app.get("/health")
 async def health():
@@ -25,13 +31,45 @@ async def health():
 async def regions():
     return {"regions": [{"id": k, "provider": "yasno", **v} for k, v in YASNO_REGIONS.items()]}
 
+def minute_to_time(value: int) -> str:
+    value = max(0, min(int(value), 1440))
+    if value == 1440:
+        return "24:00"
+    return f"{value // 60:02d}:{value % 60:02d}"
+
+def normalize_slots(slots) -> list:
+    result = []
+    for slot in slots or []:
+        if not isinstance(slot, dict):
+            continue
+        start = slot.get("start")
+        end = slot.get("end")
+        slot_type = slot.get("type")
+        if start is None or end is None:
+            continue
+        item = {
+            "start": minute_to_time(start),
+            "end": minute_to_time(end),
+            "type": slot_type,
+        }
+        if slot_type == "Definite":
+            item["status"] = "OFF"
+        elif slot_type == "NotPlanned":
+            item["status"] = "ON"
+        else:
+            item["status"] = "UNKNOWN"
+        result.append(item)
+    return result
+
 def normalize_day(day: dict) -> dict:
     raw_status = day.get("status")
     date = day.get("date")
+    slots = normalize_slots(day.get("slots"))
     return {
         "date": date[:10] if isinstance(date, str) else date,
         "status": STATUS_MAP.get(raw_status, raw_status or "UNKNOWN"),
-        "outages": day.get("slots") or [],
+        "slots": slots,
+        "outages": [x for x in slots if x["status"] == "OFF"],
     }
 
 async def yasno_get(path: str, params: dict | None = None):
@@ -45,24 +83,44 @@ async def yasno_get(path: str, params: dict | None = None):
     except (httpx.RequestError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"Provider request failed: {type(exc).__name__}") from exc
 
-@app.get("/api/v1/address/search")
-async def address_search(
-    region: str,
-    street: str = Query(..., min_length=2),
-    house: str = Query(..., min_length=1),
-):
+def street_queries(street: str) -> list[str]:
+    original = " ".join(street.strip().split())
+    cleaned = re.sub(r"[^0-9A-Za-zА-Яа-яІіЇїЄєҐґ'’ -]+", " ", original)
+    words = [w for w in cleaned.split() if w.casefold().rstrip(".") not in STREET_STOPWORDS]
+    candidates = [original]
+    if words:
+        candidates.append(" ".join(words))
+        # YASNO is much more reliable with the distinctive surname/name fragment.
+        candidates.extend(reversed(words))
+        if len(words) >= 2:
+            candidates.append(" ".join(reversed(words)))
+    result = []
+    seen = set()
+    for q in candidates:
+        q = q.strip()
+        key = q.casefold()
+        if len(q) >= 2 and key not in seen:
+            seen.add(key)
+            result.append(q)
+    return result
+
+async def resolve_address(region: str, street: str, house: str) -> dict:
     config = YASNO_REGIONS.get(region)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
 
     common = {"regionId": config["region_id"], "dsoId": config["dso_id"]}
+    streets = []
+    matched_query = None
+    for query in street_queries(street):
+        data = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": query})
+        if isinstance(data, list) and data:
+            streets = data
+            matched_query = query
+            break
 
-    streets = await yasno_get(
-        f"{YASNO_ADDRESS}/streets",
-        {**common, "query": street},
-    )
-    if not isinstance(streets, list) or not streets:
-        raise HTTPException(status_code=404, detail="Street not found")
+    if not streets:
+        raise HTTPException(status_code=404, detail={"message": "Street not found", "tried": street_queries(street)})
 
     street_item = streets[0]
     street_id = street_item.get("id")
@@ -76,8 +134,9 @@ async def address_search(
     if not isinstance(houses, list) or not houses:
         raise HTTPException(status_code=404, detail="House not found")
 
+    wanted = house.strip().casefold()
     exact = next(
-        (x for x in houses if str(x.get("name", x.get("number", ""))).strip().casefold() == house.strip().casefold()),
+        (x for x in houses if str(x.get("value", x.get("name", x.get("number", "")))).strip().casefold() == wanted),
         houses[0],
     )
     house_id = exact.get("id")
@@ -111,10 +170,22 @@ async def address_search(
         "street": street_item,
         "house": exact,
         "groups": groups,
+        "matched_query": matched_query,
     }
 
-@app.get("/api/v1/outages/{region}/{group}")
-async def outages(region: str, group: str):
+@app.get("/api/v1/address/search")
+async def address_search(
+    region: str,
+    street: str = Query(..., min_length=2),
+    house: str = Query(..., min_length=1),
+):
+    return await resolve_address(region, street, house)
+
+@app.get("/api/v1/address/{region}/{street}/{house}")
+async def address_lookup(region: str, street: str, house: str):
+    return await resolve_address(region, street, house)
+
+async def get_outages(region: str, group: str) -> dict:
     config = YASNO_REGIONS.get(region)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
@@ -134,4 +205,28 @@ async def outages(region: str, group: str):
         "provider_updated_at": group_data.get("updatedOn"),
         "today": normalize_day(group_data.get("today") or {}),
         "tomorrow": normalize_day(group_data.get("tomorrow") or {}),
+    }
+
+@app.get("/api/v1/outages/{region}/{group}")
+async def outages(region: str, group: str):
+    return await get_outages(region, group)
+
+@app.get("/api/v1/address-outages")
+async def address_outages(
+    region: str,
+    street: str = Query(..., min_length=2),
+    house: str = Query(..., min_length=1),
+):
+    address = await resolve_address(region, street, house)
+    schedules = [await get_outages(region, group) for group in address["groups"]]
+    return {
+        "region": region,
+        "provider": "yasno",
+        "address": {
+            "street": address["street"],
+            "house": address["house"],
+            "matched_query": address["matched_query"],
+        },
+        "groups": address["groups"],
+        "schedules": schedules,
     }
