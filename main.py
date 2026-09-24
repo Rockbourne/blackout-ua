@@ -3,7 +3,7 @@ import re
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 
-app = FastAPI(title="Blackout UA API", version="0.4.0")
+app = FastAPI(title="Blackout UA API", version="0.4.1")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -21,7 +21,7 @@ STREET_STOPWORDS = {"вул", "вулиця", "просп", "проспект", 
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.4.0", "docs": "/docs"}
+    return {"name": "Blackout UA API", "version": "0.4.1", "docs": "/docs"}
 
 @app.get("/health")
 async def health():
@@ -217,6 +217,23 @@ async def address_outages(
     street: str = Query(..., min_length=2),
     house: str = Query(..., min_length=1),
 ):
+    address = await resolve_address(region, street, house)
+    schedules = [await get_outages(region, group) for group in address["groups"]]
+    return {
+        "region": region,
+        "provider": "yasno",
+        "address": {
+            "street": address["street"],
+            "house": address["house"],
+            "matched_query": address["matched_query"],
+        },
+        "groups": address["groups"],
+        "schedules": schedules,
+    }
+
+
+@app.get("/api/v1/address-outages/{region}/{street}/{house}")
+async def address_outages_path(region: str, street: str, house: str):
     address = await resolve_address(region, street, house)
     schedules = [await get_outages(region, group) for group in address["groups"]]
     return {
