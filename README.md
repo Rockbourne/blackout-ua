@@ -1,23 +1,110 @@
-# Blackout UA API — prototype
+# Blackout UA
 
-Provider-based backend prototype for normalizing Ukrainian electricity outage schedules.
+**Blackout UA** — Android-застосунок і серверна платформа для роботи з графіками відключень електроенергії в Україні.
 
-## Run
+Проєкт не прив'язує мобільний клієнт до API окремого оператора. Backend отримує дані від різних операторів, приводить їх до спільної моделі, зберігає версії графіків, визначає зміни та надсилає сповіщення користувачам.
+
+## Що вже є
+
+### Android
+- вибір оператора та адреси;
+- підтримка YASNO та інтеграція Черкасиобленерго;
+- графік на сьогодні та завтра;
+- візуальна добова шкала відключень;
+- поточний статус і наступне планове відключення;
+- схід/захід сонця на шкалі;
+- налаштування попередження перед відключенням;
+- Firebase Cloud Messaging;
+- тестовий графік і локальне тестове сповіщення;
+- стабільний debug signing для оновлення APK поверх попередньої збірки.
+
+### Backend
+- FastAPI REST API;
+- provider layer для підключення різних операторів;
+- нормалізація графіків YASNO;
+- адресний пошук;
+- проксі/адаптер для адресного API Черкасиобленерго;
+- PostgreSQL для snapshots, підписок, пристроїв і подій;
+- версіонування графіків та change events;
+- фоновий polling;
+- FCM push;
+- нагадування перед запланованим відключенням.
+
+## Архітектура
+
+```text
+Оператори / регіональні API
+           ↓
+      Provider layer
+           ↓
+       Normalizer
+           ↓
+      PostgreSQL
+           ↓
+      Change detector
+        ↓       ↓
+      REST      FCM
+        ↓       ↓
+          Android
+```
+
+Android не повинен залежати від внутрішнього формату конкретного оператора. Особливості YASNO, Черкасиобленерго та майбутніх джерел ізолюються на сервері.
+
+## Підтримувані джерела
+
+- **YASNO** — Київ, Дніпро (ДТЕК/ЦЕК): адресний пошук, визначення групи, нормалізований графік.
+- **Черкасиобленерго** — у роботі: філія/енергомережа → населений пункт → вулиця → будинок → дані про відключення.
+
+Архітектура розрахована на додавання інших ОСР без переписування Android-клієнта.
+
+## API
+
+Production: `https://blackout-ua-api.onrender.com/`
+
+Swagger: `/docs`
+
+Основні маршрути:
+- `GET /health`
+- `GET /api/v1/providers`
+- `GET /api/v1/regions`
+- `GET /api/v1/address/streets`
+- `GET /api/v1/address/houses`
+- `GET /api/v1/address-outages`
+- `GET /api/v1/cherkasy/departments`
+- `GET /api/v1/cherkasy/departments/{dept_id}/cities`
+- `GET /api/v1/cherkasy/cities/{city_id}/streets`
+- `GET /api/v1/cherkasy/streets/{street_id}/houses`
+- `POST /api/v1/devices/register`
+- `POST /api/v1/subscriptions`
+
+## Запуск backend локально
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn main:app --reload
 ```
 
-Open `/docs` for Swagger.
+Для повної роботи потрібні змінні середовища PostgreSQL і Firebase.
 
-### Endpoints
-- `GET /health`
-- `GET /api/v1/regions`
-- `GET /api/v1/outages/{region}/{group}`
+## Android
 
-Initial YASNO mappings: `kyiv`, `dnipro-dtek`, `dnipro-cek`.
+Android-проєкт знаходиться в `android/`.
 
-DTEK is intentionally isolated behind a provider adapter because its regional sites use frontend WordPress AJAX and can be protected by Imperva/WAF. Next step: integrate a WAF-aware DTEK client server-side and add persistence/version diffing.
+Debug APK автоматично збирається GitHub Actions після змін Android-коду в `main`. Firebase-конфігурація та signing material передаються через GitHub Secrets.
+
+## Напрямок розвитку
+
+- завершити нормалізацію подій Черкасиобленерго;
+- додати інші обленерго/ОСР;
+- порівнювати планові та фактичні відключення;
+- історія дотримання графіка;
+- покращити pairing змінених інтервалів відключень;
+- менеджер резервного живлення: power station, навантаження, прогноз автономності;
+- генератор, запас пального та прогноз часу роботи;
+- offline cache.
+
+## Статус
+
+Проєкт активно розробляється. Дані операторів можуть змінювати формат або бути тимчасово недоступними, тому відсутність запису про відключення не завжди означає гарантовану наявність електроенергії.
