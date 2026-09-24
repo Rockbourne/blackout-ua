@@ -67,7 +67,7 @@ class MainActivity:AppCompatActivity(){
      override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
       cities=r.body()?.items.orEmpty().filter{!it.ID.isNullOrBlank()&&!it.NAME.isNullOrBlank()}
       citySpinner.adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,cities.map{it.NAME!!})
-      if(cities.isNotEmpty())citySpinner.setSelection(0)
+      if(cities.isNotEmpty()){citySpinner.setSelection(0,false);streetView.setText("",false);houseView.setText("",false)}
       else Toast.makeText(this@MainActivity,"Для цієї філії населені пункти не отримані",Toast.LENGTH_LONG).show()
      }
      override fun onFailure(c:Call<CherkasyItems>,t:Throwable){Toast.makeText(this@MainActivity,"Помилка завантаження населених пунктів",Toast.LENGTH_LONG).show()}
@@ -116,7 +116,16 @@ class MainActivity:AppCompatActivity(){
      if(providers[providerSpinner.selectedItemPosition]=="cherkasyoblenergo"){
       val cityId=cities.getOrNull(citySpinner.selectedItemPosition)?.ID?.toIntOrNull()?:return
       api.cherkasyStreets(cityId,q).enqueue(object:Callback<CherkasyItems>{
-       override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){streets=r.body()?.items.orEmpty();streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,streets.map{it.NAME?:""}));streetView.setOnItemClickListener{_,_,pos,_->selectedStreetId=streets.getOrNull(pos)?.ID?.toIntOrNull();selectedStreetId?.let{loadCherkasyHouses(it,houseView)}};streetView.showDropDown()}
+       override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+       streets=r.body()?.items.orEmpty()
+       streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,streets.map{it.NAME?:""}))
+       streetView.setOnItemClickListener{_,_,pos,_->
+        selectedStreetId=streets.getOrNull(pos)?.ID?.toIntOrNull()
+        houseView.setText("Завантаження…",false);houseView.isEnabled=false
+        selectedStreetId?.let{loadCherkasyHouses(it,houseView)}
+       }
+       if(streets.isNotEmpty())streetView.showDropDown()
+      }
        override fun onFailure(c:Call<CherkasyItems>,t:Throwable){}
       })
      }else{
@@ -150,7 +159,17 @@ class MainActivity:AppCompatActivity(){
  }
 
  private fun loadYasnoHouses(region:String,streetId:Int,view:AutoCompleteTextView){api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{override fun onResponse(c:Call<AddressItems>,r:Response<AddressItems>){val values=r.body()?.items?.mapNotNull{it.value}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<AddressItems>,t:Throwable){}})}
- private fun loadCherkasyHouses(streetId:Int,view:AutoCompleteTextView){api.cherkasyHouses(streetId).enqueue(object:Callback<CherkasyItems>{override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){val values=r.body()?.items?.mapNotNull{it.HOUSE}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<CherkasyItems>,t:Throwable){}})}
+ private fun loadCherkasyHouses(streetId:Int,view:AutoCompleteTextView){
+  api.cherkasyHouses(streetId).enqueue(object:Callback<CherkasyItems>{
+   override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
+    val values=r.body()?.items?.mapNotNull{it.HOUSE}.orEmpty()
+    view.isEnabled=true;view.setText("",false)
+    view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values))
+    if(values.isNotEmpty())view.showDropDown()
+   }
+   override fun onFailure(c:Call<CherkasyItems>,t:Throwable){view.isEnabled=true;view.setText("",false);Toast.makeText(this@MainActivity,"Не вдалося завантажити будинки",Toast.LENGTH_LONG).show()}
+  })
+ }
 
  private fun loadYasnoAddress(region:String,street:String,house:String){
   findViewById<TextView>(R.id.status).text="Шукаю…";api.addressOutages(region,street,house).enqueue(object:Callback<AddressOutages>{
