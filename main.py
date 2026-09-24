@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.16.0")
+app = FastAPI(title="Blackout UA API", version="0.17.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.16.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.17.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -634,3 +634,29 @@ async def push_status():
         tokens = await conn.fetchval("SELECT COUNT(*) FROM devices WHERE enabled=TRUE AND fcm_token IS NOT NULL")
         pending = await conn.fetchval("SELECT COUNT(*) FROM change_events WHERE delivered=FALSE")
     return {"firebase": "ready" if firebase_app else "disabled", "devices": devices, "tokens": tokens, "pending_events": pending}
+
+
+@app.get("/api/v1/debug/address/{region}/{street}/{house}")
+async def debug_address(region: str, street: str, house: str):
+    config = YASNO_REGIONS.get(region)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Unsupported region: {region}")
+    common = {"regionId": config["region_id"], "dsoId": config["dso_id"]}
+    attempts = []
+    all_streets = []
+    seen = set()
+    for query in street_queries(street):
+        data = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": query})
+        attempts.append({"query": query, "count": len(data) if isinstance(data, list) else None, "results": data})
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("id") not in seen:
+                    seen.add(item.get("id")); all_streets.append(item)
+    house_results = []
+    for s in all_streets[:20]:
+        sid = s.get("id")
+        if sid is None: continue
+        houses = await yasno_get(f"{YASNO_ADDRESS}/houses", {**common, "streetId": sid, "query": house})
+        if isinstance(houses, list) and houses:
+            house_results.append({"street": s, "houses": houses})
+    return {"input":{"region":region,"street":street,"house":house},"street_attempts":attempts,"house_matches":house_results}
