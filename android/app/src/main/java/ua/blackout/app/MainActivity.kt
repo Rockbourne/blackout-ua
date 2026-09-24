@@ -50,8 +50,14 @@ class MainActivity:AppCompatActivity(){
    AlertDialog.Builder(this).setTitle("Налаштування").setView(v).setNegativeButton("Скасувати",null).setPositiveButton("Зберегти"){_,_->val ri=spinner.selectedItemPosition;val street=streetView.text.toString().trim();val house=houseView.text.toString().trim();prefs.edit().putInt("provider_index",providerSpinner.selectedItemPosition).putInt("region_index",ri).putString("street",street).putString("house",house).putBoolean("show_sun",sun.isChecked).putInt("notify_before_minutes",notifyValues[notifySpinner.selectedItemPosition]).apply();applySun();if(street.length>=2&&house.isNotEmpty())loadAddress(regions[ri],street,house)}.show()
   }
   findViewById<Button>(R.id.testSchedule).setOnClickListener{
-   val now=ZonedDateTime.now();fun hm(minutes:Int):String{val m=((now.hour*60+now.minute+minutes)%1440+1440)%1440;return "%02d:%02d".format(m/60,m%60)}
-   val date=now.toLocalDate().toString();val today=DaySchedule(date,"SCHEDULED",listOf(Outage(date,hm(30),hm(150)),Outage(date,hm(300),hm(420))),listOf(Slot("00:00",hm(30),"ON","NotPlanned"),Slot(hm(30),hm(150),"OFF","Definite"),Slot(hm(150),hm(300),"ON","NotPlanned"),Slot(hm(300),hm(420),"OFF","Definite"),Slot(hm(420),"24:00","ON","NotPlanned")))
+   val now=ZonedDateTime.now(ZoneId.of("Europe/Kyiv"))
+   fun hm(minutes:Int):String{val m=(now.hour*60+now.minute+minutes).coerceIn(0,1439);return "%02d:%02d".format(m/60,m%60)}
+   val date=now.toLocalDate().toString()
+   val firstStart=hm(30);val firstEnd=hm(150);val secondStart=hm(300);val secondEnd=hm(420)
+   val todayOutages=mutableListOf(Outage(date,firstStart,firstEnd))
+   val todaySlots=mutableListOf(Slot("00:00",firstStart,"ON","NotPlanned"),Slot(firstStart,firstEnd,"OFF","Definite"))
+   if(secondStart>firstEnd&&secondEnd>secondStart){todayOutages.add(Outage(date,secondStart,secondEnd));todaySlots.add(Slot(firstEnd,secondStart,"ON","NotPlanned"));todaySlots.add(Slot(secondStart,secondEnd,"OFF","Definite"));todaySlots.add(Slot(secondEnd,"24:00","ON","NotPlanned"))}else{todaySlots.add(Slot(firstEnd,"24:00","ON","NotPlanned"))}
+   val today=DaySchedule(date,"SCHEDULED",todayOutages,todaySlots)
    val td=now.plusDays(1).toLocalDate().toString();val tomorrow=DaySchedule(td,"SCHEDULED",listOf(Outage(td,"08:00","11:00"),Outage(td,"18:00","21:00")),listOf(Slot("00:00","08:00","ON","NotPlanned"),Slot("08:00","11:00","OFF","Definite"),Slot("11:00","18:00","ON","NotPlanned"),Slot("18:00","21:00","OFF","Definite"),Slot("21:00","24:00","ON","NotPlanned")))
    findViewById<TextView>(R.id.status).text="ТЕСТ · Світло має бути";findViewById<TextView>(R.id.details).text="Тестові дані · група TEST";renderNext(CurrentState("ON",null,now.toString(),Outage(date,hm(30),hm(150))));findViewById<ScheduleTimelineView>(R.id.todayTimeline).setSchedule(today,true);findViewById<ScheduleTimelineView>(R.id.tomorrowTimeline).setSchedule(tomorrow,false);findViewById<TextView>(R.id.today).text=formatDay("Сьогодні",today);findViewById<TextView>(R.id.tomorrow).text=formatDay("Завтра",tomorrow)
   }
