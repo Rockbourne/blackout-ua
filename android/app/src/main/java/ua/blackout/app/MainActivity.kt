@@ -119,9 +119,9 @@ class MainActivity:AppCompatActivity(){
      val q=s?.toString()?.trim().orEmpty();if(q.length<2)return
      if(providers[providerSpinner.selectedItemPosition]=="cherkasyoblenergo"){
       val cityId=cities.getOrNull(citySpinner.selectedItemPosition)?.ID?.toIntOrNull()?:return
-      api.cherkasyStreets(cityId,q).enqueue(object:Callback<CherkasyItems>{
+      cherkasyDirect.streets(cityId=cityId,q=q).enqueue(object:Callback<List<CherkasyItem>>{
        override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
-       streets=r.body()?.items.orEmpty()
+       streets=r.body().orEmpty()
        streetView.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,streets.map{it.NAME?:""}))
        streetView.setOnItemClickListener{_,_,pos,_->
         selectedStreetId=streets.getOrNull(pos)?.ID?.toIntOrNull()
@@ -130,7 +130,7 @@ class MainActivity:AppCompatActivity(){
        }
        if(streets.isNotEmpty())streetView.showDropDown()
       }
-       override fun onFailure(c:Call<CherkasyItems>,t:Throwable){}
+       override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){}
       })
      }else{
       val region=yasnoRegions[regionSpinner.selectedItemPosition]
@@ -187,14 +187,14 @@ class MainActivity:AppCompatActivity(){
 
  private fun loadYasnoHouses(region:String,streetId:Int,view:AutoCompleteTextView){api.houses(region,streetId,view.text.toString().trim()).enqueue(object:Callback<AddressItems>{override fun onResponse(c:Call<AddressItems>,r:Response<AddressItems>){val values=r.body()?.items?.mapNotNull{it.value}.orEmpty();view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values));if(values.isNotEmpty())view.showDropDown()};override fun onFailure(c:Call<AddressItems>,t:Throwable){}})}
  private fun loadCherkasyHouses(streetId:Int,view:AutoCompleteTextView){
-  api.cherkasyHouses(streetId).enqueue(object:Callback<CherkasyItems>{
+  cherkasyDirect.houses(streetId=streetId).enqueue(object:Callback<List<CherkasyItem>>{
    override fun onResponse(c:Call<CherkasyItems>,r:Response<CherkasyItems>){
-    val values=r.body()?.items?.mapNotNull{it.HOUSE}.orEmpty()
+    val values=r.body().orEmpty().mapNotNull{it.HOUSE}
     view.isEnabled=true;view.setText("",false)
     view.setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,values))
     if(values.isNotEmpty())view.showDropDown()
    }
-   override fun onFailure(c:Call<CherkasyItems>,t:Throwable){view.isEnabled=true;view.setText("",false);Toast.makeText(this@MainActivity,"Не вдалося завантажити будинки",Toast.LENGTH_LONG).show()}
+   override fun onFailure(c:Call<List<CherkasyItem>>,t:Throwable){view.isEnabled=true;view.setText("",false);Toast.makeText(this@MainActivity,"Не вдалося завантажити будинки",Toast.LENGTH_LONG).show()}
   })
  }
 
