@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.17.0")
+app = FastAPI(title="Blackout UA API", version="0.18.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.17.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.18.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -216,15 +216,38 @@ async def resolve_address(region: str, street: str, house: str) -> dict:
     common = {"regionId": config["region_id"], "dsoId": config["dso_id"]}
     streets = []
     matched_query = None
-    for query in street_queries(street):
+    tried_queries = street_queries(street)
+    for query in tried_queries:
         data = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": query})
         if isinstance(data, list) and data:
             streets = data
             matched_query = query
             break
 
+    # YASNO may index personal-name streets in reversed order:
+    # "Юлії Здановської" is stored as "Здановської Юлії".
     if not streets:
-        raise HTTPException(status_code=404, detail={"message": "Street not found", "tried": street_queries(street)})
+        cleaned_words = [
+            w for w in re.findall(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ'’]+", street)
+            if w.casefold().rstrip(".") not in STREET_STOPWORDS
+        ]
+        fallback_queries = []
+        if len(cleaned_words) >= 2:
+            fallback_queries.extend([cleaned_words[-1], cleaned_words[0], " ".join(reversed(cleaned_words))])
+        elif cleaned_words:
+            fallback_queries.append(cleaned_words[0])
+        for query in fallback_queries:
+            if query.casefold() in {q.casefold() for q in tried_queries}:
+                continue
+            data = await yasno_get(f"{YASNO_ADDRESS}/streets", {**common, "query": query})
+            tried_queries.append(query)
+            if isinstance(data, list) and data:
+                streets = data
+                matched_query = query
+                break
+
+    if not streets:
+        raise HTTPException(status_code=404, detail={"message": "Street not found", "tried": tried_queries})
 
     wanted_words = {w.casefold() for w in re.findall(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ]+", street) if w.casefold().rstrip(".") not in STREET_STOPWORDS}
     def street_score(item):
