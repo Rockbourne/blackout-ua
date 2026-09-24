@@ -26,7 +26,8 @@ interface Api {
  @GET("api/v1/address/houses") fun houses(@Query("region") region:String,@Query("street_id") streetId:Int,@Query("q") q:String=""):Call<AddressItems>
  @GET("api/v1/address-outages") fun addressOutages(@Query("region") region:String,@Query("street") street:String,@Query("house") house:String):Call<AddressOutages>
 
- @GET("api/v1/cherkasy/departments") fun cherkasyDepartments():Call<CherkasyItems>\n @GET("api/v1/cherkasy/departments/{deptId}/cities") fun cherkasyCities(@Path("deptId") deptId:Int=1):Call<CherkasyItems>
+ @GET("api/v1/cherkasy/departments") fun cherkasyDepartments():Call<CherkasyItems>
+ @GET("api/v1/cherkasy/departments/{deptId}/cities") fun cherkasyCities(@Path("deptId") deptId:Int=1):Call<CherkasyItems>
  @GET("api/v1/cherkasy/cities/{cityId}/streets") fun cherkasyStreets(@Path("cityId") cityId:Int,@Query("q") q:String=""):Call<CherkasyItems>
  @GET("api/v1/cherkasy/streets/{streetId}/houses") fun cherkasyHouses(@Path("streetId") streetId:Int,@Query("q") q:String=""):Call<CherkasyItems>
  @GET("api/v1/cherkasy/address/accounts") fun cherkasyAccounts(@Query("street_id") streetId:Int,@Query("house") house:String):Call<CherkasyAccounts>
