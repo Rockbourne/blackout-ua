@@ -5,6 +5,8 @@
 <Spinner android:id="@+id/region" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="52dp"/>
 <AutoCompleteTextView android:id="@+id/street" android:completionThreshold="2" android:hint="Вулиця" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <AutoCompleteTextView android:id="@+id/house" android:completionThreshold="0" android:hint="Будинок" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<TextView android:text="Сповіщення" android:textStyle="bold" android:textSize="20sp" android:layout_marginTop="20dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+<Spinner android:id="@+id/notifyBefore" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="52dp"/>
 <TextView android:text="Графік" android:textStyle="bold" android:textSize="20sp" android:layout_marginTop="20dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
 <Switch android:id="@+id/showSun" android:text="Показувати схід і захід сонця" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 </LinearLayout>
