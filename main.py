@@ -12,7 +12,7 @@ from firebase_admin import credentials, messaging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Blackout UA API", version="0.14.0")
+app = FastAPI(title="Blackout UA API", version="0.15.0")
 
 YASNO_ROOT = "https://app.yasno.ua/api/blackout-service/public/shutdowns"
 YASNO_ADDRESS = f"{YASNO_ROOT}/addresses/v2"
@@ -125,7 +125,7 @@ class SubscriptionRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Blackout UA API", "version": "0.14.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
+    return {"name": "Blackout UA API", "version": "0.15.0", "docs": "/docs", "database": "connected" if db_pool else "disabled"}
 
 @app.get("/health")
 async def health():
@@ -226,7 +226,12 @@ async def resolve_address(region: str, street: str, house: str) -> dict:
     if not streets:
         raise HTTPException(status_code=404, detail={"message": "Street not found", "tried": street_queries(street)})
 
-    street_item = streets[0]
+    wanted_words = {w.casefold() for w in re.findall(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ]+", street) if w.casefold().rstrip(".") not in STREET_STOPWORDS}
+    def street_score(item):
+        value = str(item.get("value", item.get("name", "")))
+        provider_words = {w.casefold() for w in re.findall(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ]+", value) if w.casefold().rstrip(".") not in STREET_STOPWORDS}
+        return (len(wanted_words & provider_words), -len(provider_words ^ wanted_words))
+    street_item = max(streets, key=street_score)
     street_id = street_item.get("id")
     if street_id is None:
         raise HTTPException(status_code=502, detail="Provider returned street without id")
